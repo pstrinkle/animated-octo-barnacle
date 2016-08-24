@@ -6,7 +6,7 @@ a sufficiently long time, I've created this repository to hold them as examples.
 
 # Planned algorithms
 * sorting
-  * merge sort
+  * optimized merge sort
   * heap sort(?maybe)
   * insertion sort
   * quicksort (randomized quicksort forces average runtime ``O(n*logn)`` instead of ``O(n**2)`` 
@@ -15,6 +15,10 @@ a sufficiently long time, I've created this repository to hold them as examples.
   * depth first search
   * also how to represent them and why
   * minimum spanning trees (yay, greedy)
+
+# Implemented
+* sorting
+  * merge sort
 
 # Data structures
 * trees
