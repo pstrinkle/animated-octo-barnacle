@@ -16,10 +16,6 @@ a sufficiently long time, I've created this repository to hold them as examples.
   * also how to represent them and why
   * minimum spanning trees (yay, greedy)
 
-# Implemented
-* sorting
-  * merge sort
-
 # Data structures
 * trees
   * binary search tree
@@ -28,6 +24,10 @@ a sufficiently long time, I've created this repository to hold them as examples.
 * lists
   * linked lists are fun (maybe doubly, maybe skipped)
 * ...
+
+# Implemented
+* sorting
+  * merge sort
 
 # Study
 * need to review network flow
