@@ -22,6 +22,9 @@ verify I didn't introduce a regression --- provided my test coverage was good.
 * graphs
   * representation
   * minimum spanning trees (yay, greedy)
+* dynamic programming
+  * fibonnaci
+  * knapsack (0-1)
 
 # Data structures
 * trees
