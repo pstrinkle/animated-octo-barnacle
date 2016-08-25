@@ -10,11 +10,10 @@ just verifying quickly the output.  So, if I was doing this for more than fun,
 I'd have tests verifying each case and then changes would go through tests to
 verify I didn't introduce a regression --- provided my test coverage was good.
 
-# Planned algorithms
+# Planned algorithms and data structures
 * sorting
   * optimized merge sort (just use insertion towards the bottom)
   * heap sort(?maybe)
-  * counting sort
   * quicksort (randomized quicksort forces average runtime ``O(n*logn)`` instead of ``O(n**2)`` 
 * trees
   * breadth first search
@@ -25,8 +24,6 @@ verify I didn't introduce a regression --- provided my test coverage was good.
 * dynamic programming
   * fibonnaci
   * knapsack (0-1)
-
-# Data structures
 * trees
   * red-black tree
   * B-variant tree
@@ -40,6 +37,7 @@ verify I didn't introduce a regression --- provided my test coverage was good.
 * sorting
   * merge sort
   * insertion sort
+  * counting sort
 * trees
   * binary search tree
 * lists
