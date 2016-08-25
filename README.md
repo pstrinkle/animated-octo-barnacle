@@ -18,7 +18,6 @@ a sufficiently long time, I've created this repository to hold them as examples.
 
 # Data structures
 * trees
-  * binary search tree
   * red-black tree
   * B-variant tree
 * lists
@@ -28,6 +27,8 @@ a sufficiently long time, I've created this repository to hold them as examples.
 # Implemented
 * sorting
   * merge sort
+* trees
+  * binary search tree
 
 # Study
 * need to review network flow
