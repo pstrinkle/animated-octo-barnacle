@@ -12,15 +12,15 @@ verify I didn't introduce a regression --- provided my test coverage was good.
 
 # Planned algorithms
 * sorting
-  * optimized merge sort
+  * optimized merge sort (just use insertion towards the bottom)
   * heap sort(?maybe)
-  * insertion sort
   * counting sort
   * quicksort (randomized quicksort forces average runtime ``O(n*logn)`` instead of ``O(n**2)`` 
 * trees
   * breadth first search
   * depth first search
-  * also how to represent them and why
+* graphs
+  * representation
   * minimum spanning trees (yay, greedy)
 
 # Data structures
@@ -36,6 +36,7 @@ verify I didn't introduce a regression --- provided my test coverage was good.
 # Implemented
 * sorting
   * merge sort
+  * insertion sort
 * trees
   * binary search tree
 * lists
