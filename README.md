@@ -15,6 +15,7 @@ verify I didn't introduce a regression --- provided my test coverage was good.
   * optimized merge sort
   * heap sort(?maybe)
   * insertion sort
+  * counting sort
   * quicksort (randomized quicksort forces average runtime ``O(n*logn)`` instead of ``O(n**2)`` 
 * trees
   * breadth first search
@@ -26,7 +27,10 @@ verify I didn't introduce a regression --- provided my test coverage was good.
 * trees
   * red-black tree
   * B-variant tree
+  * splay tree
+  * AVL tree
 * lists
+  * sorted linked list
   * skipped linked lists
 
 # Implemented
