@@ -1,4 +1,7 @@
 
+#### XXX: have it not insert if it finds a match, for now, I'm saying the input
+#### doesn't allow this case, but it's arbitrary and easy to fix.
+
 from json import dumps
 
 class Node(object):
@@ -6,6 +9,8 @@ class Node(object):
         self.value = value
         self.left = None
         self.right = None
+        # XXX: Adding the parent pointer my C code leverages could help 
+        # simplify the code.
 
     def __repr__(self, *args, **kwargs):
         
@@ -31,7 +36,9 @@ class BST(object):
                 parent.left = n
             else:
                 parent.right = n
+            return
 
+        if node.value == value:
             return
 
         if node.value > value:
