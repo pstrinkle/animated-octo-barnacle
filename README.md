@@ -22,7 +22,6 @@ verify I didn't introduce a regression --- provided my test coverage was good.
   * representation
   * minimum spanning trees (yay, greedy)
 * dynamic programming
-  * fibonnaci
   * knapsack (0-1)
 * trees
   * red-black tree
@@ -42,6 +41,8 @@ verify I didn't introduce a regression --- provided my test coverage was good.
   * binary search tree
 * lists
   * linked lists
+* dynamic programming
+  * fibonacci
 
 # Study
 * need to review network flow
