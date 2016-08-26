@@ -21,15 +21,12 @@ verify I didn't introduce a regression --- provided my test coverage was good.
 * graphs
   * representation
   * minimum spanning trees (yay, greedy)
-* dynamic programming
-  * knapsack (0-1)
 * trees
-  * red-black tree
   * B-variant tree
-  * splay tree
   * AVL tree
+  * red-black tree
+  * splay tree
 * lists
-  * sorted linked list
   * skipped linked lists
 
 # Implemented
@@ -41,8 +38,10 @@ verify I didn't introduce a regression --- provided my test coverage was good.
   * binary search tree
 * lists
   * linked lists
+  * sorted linked list
 * dynamic programming
   * fibonacci
+  * knapsack (0-1)
 
 # Study
 * need to review network flow
