@@ -1,6 +1,12 @@
 
-PKGS = lists/linkedlist sorting/countingsort sorting/insertionsort sorting/mergesort trees/binarysearchtree
-CLNPKGS = $(PKGS)
+PKGS = lists/linkedlist \
+	lists/sortedlinkedlist \
+	sorting/countingsort \
+	sorting/insertionsort \
+	sorting/mergesort \
+	trees/binarysearchtree \
+	dynamicprogramming/fibonacci \
+	dynamicprogramming/knapsack
 
 all: $(PKGS)
 $(PKGS):
