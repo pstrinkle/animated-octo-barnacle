@@ -28,6 +28,8 @@ verify I didn't introduce a regression --- provided my test coverage was good.
   * splay tree
 * lists
   * skipped linked lists
+* dynamic programming
+  * edit distance
 
 # Implemented
 * sorting
