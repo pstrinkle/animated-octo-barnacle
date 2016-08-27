@@ -444,7 +444,7 @@ int main(void)
     block_t *root = NULL;
 
 #define FIRSTVALUE 1
-#define INSERTCOUNT 11
+#define INSERTCOUNT 13
 #define POSTLASTVALUE (FIRSTVALUE + INSERTCOUNT)
 
     if (NULL == root) {
