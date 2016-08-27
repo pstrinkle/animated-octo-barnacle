@@ -21,7 +21,7 @@ typedef struct key {
 typedef struct block {
     int id; /* for humans. */
     int used;
-    struct block *parent;
+    struct block *parent; /* back-link to make splitting and so on easier */
     key_t keys[NUM_KEYS+1]; /* so that there's a trailing pointer. */
 } block_t;
 
@@ -36,11 +36,17 @@ static block_t *newBlock(void)
     return b;
 }
 
+/* insert a promoted key into the block. */
 static void blockInsert(block_t *insert, key_t *promoted, block_t *newblk);
+/* split a normal block. */
 static void blockSplit(block_t *blk);
+/* split the root block */
 static void rootSplit(block_t *root);
+/* insert the value into the tree starting at the specified block. */
 static void insert(block_t *root, int value);
+/* print one block. */
 static void blockPrint(block_t *blk);
+/* print each block in a dfs pattern. */
 static void depthFirstPrint(block_t *blk);
 
 /**
@@ -191,9 +197,7 @@ static void blockSplit(block_t *blk)
 }
 
 /*
- * Splitting the root block is presently done as a special edge case, this will
- * need to be upgraded (likely) down the road to better handle repeatedly
- * splits that may end up here, such that pointers already present aren't lost.
+ * Splitting the root block is presently done as a special edge case.
  */
 static void rootSplit(block_t *root)
 {
