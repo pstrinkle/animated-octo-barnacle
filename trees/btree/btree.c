@@ -103,7 +103,7 @@ static void blockInsert(block_t *insert, key_t *promoted, block_t *newblk)
             promoted->key,
             newblk->id);
 
-    insert->keys[insert->used].ptr = promoted->ptr;
+    //insert->keys[insert->used].ptr = promoted->ptr;
     insert->keys[insert->used].key = promoted->key; /* i think this is good.. */
 
     insert->keys[insert->used+1].ptr = newblk;
@@ -135,7 +135,8 @@ static void blockSplit(block_t *blk)
 {
     /* We've received blk, which is full, and we need to split it. */
 
-    printf("blockSplit...\n");
+    int i;
+    printf("blockSplit on %d\n", blk->id);
     blockPrint(blk);
 
     /*
@@ -151,7 +152,7 @@ static void blockSplit(block_t *blk)
     middleSave.ptr = middle->ptr;
     key_t promote;
     promote.key = middle->key;
-    promote.ptr = blk; /* also, by promoting up, we don't need to reset the pointer. */
+    //promote.ptr = middle->ptr;
 
     /* these will be copied into a new block. */
     key_t *rightStart = middle + 1;
@@ -165,15 +166,26 @@ static void blockSplit(block_t *blk)
     newRight->used = (rightSize / sizeof(key_t)) - 1; /* to correct for far reach. */
     newRight->parent = blk->parent;
 
+    /* bookkeeping. */
+    for (i = 0; i <= NUM_KEYS; i++) {
+        if (newRight->keys[i].ptr) {
+            newRight->keys[i].ptr->parent = newRight;
+        }
+    }
+
     memset(middle, 0x00, rightSize + sizeof(key_t)); /* clear them off. */
     blk->used = middleIndex; /* used is index+1 */
     if (middleSave.ptr) {
         blk->keys[blk->used].ptr = middleSave.ptr;
     }
 
-    printf("blockSplit fin: \n");
-    blockPrint(blk);
-    blockPrint(newRight);
+    {
+        printf("blockSplit fin: \n");
+        printf("left: %d (parent: %d) ", blk->id, blk->parent->id);
+        blockPrint(blk);
+        printf("right: %d (parent: %d) ", newRight->id, newRight->parent->id);
+        blockPrint(newRight);
+    }
 
     return blockInsert(blk->parent, &promote, newRight);
 }
@@ -444,7 +456,7 @@ int main(void)
     block_t *root = NULL;
 
 #define FIRSTVALUE 1
-#define INSERTCOUNT 13
+#define INSERTCOUNT 50
 #define POSTLASTVALUE (FIRSTVALUE + INSERTCOUNT)
 
     if (NULL == root) {
