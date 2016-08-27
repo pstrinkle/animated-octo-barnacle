@@ -25,7 +25,6 @@ typedef struct block {
     key_t keys[NUM_KEYS+1]; /* so that there's a trailing pointer. */
 } block_t;
 
-static block_t *root = NULL;
 static int counter = 0;
 
 static block_t *newBlock(void)
@@ -118,11 +117,9 @@ static void blockInsert(block_t *insert, key_t *promoted, block_t *newblk)
             return rootSplit(insert);
         } else {
             printf("need to call normal block split\n");
+            return blockSplit(insert);
         }
     }
-
-
-
 //    for (i = 0; i < insert->used; i++) {
 //        /* if it goes in the middle.... XXX: need to re-visit. */
 //    }
@@ -138,6 +135,9 @@ static void blockSplit(block_t *blk)
 {
     /* We've received blk, which is full, and we need to split it. */
 
+    printf("blockSplit...\n");
+    blockPrint(blk);
+
     /*
      * XXX: This code is for splitting a leaf at present but I can likely make
      * it more generic by some more bookkeeping. :D
@@ -147,25 +147,33 @@ static void blockSplit(block_t *blk)
     key_t *middle = &(blk->keys[middleIndex]); /* this guy will be promoted. */
 
     /* can make generic. */
+    key_t middleSave;
+    middleSave.ptr = middle->ptr;
     key_t promote;
     promote.key = middle->key;
     promote.ptr = blk; /* also, by promoting up, we don't need to reset the pointer. */
-    /* XXX: if this already has a pointer set, we need to know and treat appropriately */
 
     /* these will be copied into a new block. */
     key_t *rightStart = middle + 1;
-    key_t *end = &(blk->keys[blk->used]);
+    key_t *end = &(blk->keys[blk->used+1]);
     size_t rightSize = (size_t)end - (size_t)rightStart;
 
     block_t *newRight = newBlock();
     key_t *newRightStart = &(newRight->keys[0]);
 
     memcpy(newRightStart, rightStart, rightSize);
-    newRight->used = rightSize / sizeof(key_t);;
+    newRight->used = (rightSize / sizeof(key_t)) - 1; /* to correct for far reach. */
     newRight->parent = blk->parent;
 
     memset(middle, 0x00, rightSize + sizeof(key_t)); /* clear them off. */
     blk->used = middleIndex; /* used is index+1 */
+    if (middleSave.ptr) {
+        blk->keys[blk->used].ptr = middleSave.ptr;
+    }
+
+    printf("blockSplit fin: \n");
+    blockPrint(blk);
+    blockPrint(newRight);
 
     return blockInsert(blk->parent, &promote, newRight);
 }
@@ -346,8 +354,8 @@ static void insert(block_t *root, int value)
     if (NUM_KEYS == where->used) {
         printf("need to split\n");
 
-        /* root split is different. */
-        if (root == where) {
+        if (NULL == where->parent) {
+            /* root split is different. */
             return rootSplit(root);
         } else {
             /*
@@ -431,40 +439,35 @@ static void depthFirstFree(block_t *blk)
 
 int main(void)
 {
+    int f;
     int i;
-    //int input[] = {1, 2, 3, 4, 5};
+    block_t *root = NULL;
 
 #define FIRSTVALUE 1
-#define INSERTCOUNT 7
+#define INSERTCOUNT 11
 #define POSTLASTVALUE (FIRSTVALUE + INSERTCOUNT)
 
     if (NULL == root) {
         root = newBlock();
     }
 
-//    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+    assert(NULL != root);
+
     for (i = FIRSTVALUE; i < POSTLASTVALUE; i++) {
-        //insert(root, input[i]);
         insert(root, i);
         depthFirstPrint(root);
     }
 
-#if 0
-    /* verify we can find all nodes entered in. */
-    {
-        int f;
-        for (i = FIRSTVALUE; i < POSTLASTVALUE; i++) {
-            //f = search(root, input[i]);
-            f = search(root, i);
-            assert(f == 1);
-        }
-    }
-#endif
+    printf("\n\n");
+    depthFirstPrint(root);
 
-    if (root) {
-        depthFirstPrint(root);
-        depthFirstFree(root);
+    /* verify we can find all nodes entered in. */
+    for (i = FIRSTVALUE; i < POSTLASTVALUE; i++) {
+        f = search(root, i);
+        assert(f == 1);
     }
+
+    depthFirstFree(root);
 
     return 0;
 }
