@@ -19,6 +19,7 @@ def mergesort(input, count):
     bi = 0
     i = 0
 
+    # do the actual sorting.
     while i < count:
         if ai < len(a) and bi < len(b):
             if a[ai] > b[bi]:
