@@ -102,14 +102,11 @@ static int search(block_t *blk, int value)
 
 static void blockInsert(block_t *insert, key_t *promoted, block_t *newblk)
 {
-//    int i;
-
     printf("blockInsert to blk: %d, key: %d, newblk: %d\n",
             insert->id,
             promoted->key,
             newblk->id);
 
-    //insert->keys[insert->used].ptr = promoted->ptr;
     insert->keys[insert->used].key = promoted->key; /* i think this is good.. */
 
     insert->keys[insert->used+1].ptr = newblk;
@@ -126,9 +123,6 @@ static void blockInsert(block_t *insert, key_t *promoted, block_t *newblk)
             return blockSplit(insert);
         }
     }
-//    for (i = 0; i < insert->used; i++) {
-//        /* if it goes in the middle.... XXX: need to re-visit. */
-//    }
 
     /*
      * This could need to be split; if so, I believe the promoted item changes.
@@ -158,7 +152,6 @@ static void blockSplit(block_t *blk)
     middleSave.ptr = middle->ptr;
     key_t promote;
     promote.key = middle->key;
-    //promote.ptr = middle->ptr;
 
     /* these will be copied into a new block. */
     key_t *rightStart = middle + 1;
@@ -272,6 +265,11 @@ static void rootSplit(block_t *root)
     root->keys[1].ptr = newRight;
 
     return;
+}
+
+static void delete(block_t *root, int value)
+{
+
 }
 
 static void insert(block_t *root, int value)
@@ -415,7 +413,10 @@ static void depthFirstPrint(block_t *blk)
     if (blk->parent == NULL) {
         printf("root: %d, used: %d | ", blk->id, blk->used);
     } else {
-        printf("blk: %d, par: %d, used: %d | ", blk->id, blk->parent->id, blk->used);
+        printf("blk: %d, par: %d, used: %d | ",
+                blk->id,
+                blk->parent->id,
+                blk->used);
     }
 
     for (i = 0; i <= NUM_KEYS; i++) {
