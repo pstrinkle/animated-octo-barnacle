@@ -13,8 +13,7 @@ verify I didn't introduce a regression --- provided my test coverage was good.
 # Planned algorithms and data structures
 * sorting
   * optimized merge sort (just use insertion towards the bottom)
-  * heap sort (?maybe)
-  * quicksort (randomized quicksort forces average runtime ``O(n*logn)`` instead of ``O(n**2)`` worst case) 
+  * heap sort (?maybe) 
 * trees
   * breadth first search
   * depth first search
@@ -38,6 +37,7 @@ verify I didn't introduce a regression --- provided my test coverage was good.
   * merge sort
   * insertion sort
   * counting sort
+  * quicksort (randomized quicksort forces average runtime ``O(n*logn)`` instead of ``O(n**2)`` worst case)
 * trees
   * binary search tree
 * lists
