@@ -13,8 +13,8 @@ verify I didn't introduce a regression --- provided my test coverage was good.
 # Planned algorithms and data structures
 * sorting
   * optimized merge sort (just use insertion towards the bottom)
-  * heap sort(?maybe)
-  * quicksort (randomized quicksort forces average runtime ``O(n*logn)`` instead of ``O(n**2)`` 
+  * heap sort (?maybe)
+  * quicksort (randomized quicksort forces average runtime ``O(n*logn)`` instead of ``O(n**2)`` worst case) 
 * trees
   * breadth first search
   * depth first search
@@ -22,14 +22,16 @@ verify I didn't introduce a regression --- provided my test coverage was good.
   * representation
   * minimum spanning trees (yay, greedy)
 * trees
-  * B-variant tree
-  * AVL tree
+  * B-variant tree **in progress**
+  * AVL tree (maybe)
   * red-black tree
-  * splay tree
+  * trie
+  * splay tree (maybe)
 * lists
   * skipped linked lists
 * dynamic programming
   * edit distance
+  * longest common sequence
 
 # Implemented
 * sorting
