@@ -46,6 +46,8 @@ verify I didn't introduce a regression --- provided my test coverage was good.
 * dynamic programming
   * fibonacci
   * knapsack (0-1)
+* tables
+  * hashtable
 
 # Study
 * need to review network flow
