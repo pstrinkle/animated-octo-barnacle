@@ -1,4 +1,4 @@
-# animated-octo-barnacle
+# octo-barnacle
 Some fun in C and Python (standard algorithms and data structures)
 
 In an attempt to just practice implementing algorithms and data structure with which I am familiar, but likely haven't implemented in 
