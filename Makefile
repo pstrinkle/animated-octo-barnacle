@@ -6,6 +6,7 @@ PKGS = lists/linkedlist \
 	sorting/mergesort \
 	sorting/quicksort \
 	trees/binarysearchtree \
+	tables/hashtable \
 	dynamicprogramming/fibonacci \
 	dynamicprogramming/knapsack
 
