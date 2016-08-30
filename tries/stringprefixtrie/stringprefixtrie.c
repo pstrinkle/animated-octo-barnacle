@@ -15,11 +15,15 @@
 
 struct node;
 
+/* a trie node for this somewhat inefficient trie. */
 typedef struct node {
+    /* the children pointers */
     struct node *children[ALPHABET_SIZE];
+    /* Is this an end node? Consider: 'con', 'consider' you need to track that
+     * 'con' is in the trie as well as 'consider'
+     */
+    int last;
 } node_t;
-
-static node_t *root = NULL;
 
 static node_t *
 newNode(void)
@@ -31,17 +35,52 @@ newNode(void)
 }
 
 static int
-search(const char *key, int len)
+search(node_t *root, const char *key, int len)
 {
+    node_t *node = root;
+    int i;
+
+    for (i = 0; i < len; i++) {
+        int let = key[i] - 'a';
+        /* That letter existed. */
+        if (NULL == node->children[let]) {
+            return FALSE;
+        }
+
+        /* If this is the last letter, check if this node terminates. */
+        if (i == len-1) {
+            if (node->last) {
+                return TRUE;
+            }
+        }
+
+        /* Move down the trie. */
+        node = node->children[let];
+    }
+
     return FALSE;
 }
 
 static void
-insert(const char *key, int len)
+insert(node_t *root, const char *key, int len)
 {
+    node_t *node = root;
     int i;
+
     for (i = 0; i < len; i++) {
-        char let = key[i] - 'a';
+        int let = key[i] - 'a';
+        /* Check if that letter exists. */
+        if (node->children[let]) {
+            //
+        } else {
+            node->children[let] = newNode();
+        }
+
+        if (i == len-1) {
+            node->last = 1; /* this node terminates. */
+        }
+
+        node = node->children[let];
     }
 
     return;
@@ -64,7 +103,22 @@ depthFirstFree(node_t *node)
 
 int main(void)
 {
+    int i;
+    node_t *root = NULL;
     root = newNode();
+
+    const char *words[] = {"asdf", "asde", "as", "tea", "ted", "ten", "qwerty",
+            "qwe", "what", "how"};
+
+    for (i = 0; i < NUM_ELEMENTS(words); i++) {
+        printf("%s\n", words[i]);
+        insert(root, words[i], strlen(words[i]));
+        assert(TRUE == search(root, words[i], strlen(words[i])));
+    }
+
+    //const char *alphabet = "abcdefghijklmnopqrstuvwxyz";
+    //insert(root, alphabet, strlen(alphabet));
+    //assert(TRUE == search(root, alphabet, strlen(alphabet)));
 
     depthFirstFree(root);
 
