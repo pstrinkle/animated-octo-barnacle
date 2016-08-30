@@ -24,7 +24,6 @@ verify I didn't introduce a regression --- provided my test coverage was good.
   * B-variant tree **in progress**
   * AVL tree (maybe)
   * red-black tree
-  * trie
   * splay tree (maybe)
 * lists
   * skipped linked lists
@@ -40,6 +39,7 @@ verify I didn't introduce a regression --- provided my test coverage was good.
   * quicksort (randomized quicksort forces average runtime ``O(n*logn)`` instead of ``O(n**2)`` worst case)
 * trees
   * binary search tree
+  * trie
 * lists
   * linked lists
   * sorted linked list
