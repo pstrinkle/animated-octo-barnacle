@@ -4,7 +4,10 @@ PKGS = lists/linkedlist \
 	sorting/countingsort \
 	sorting/insertionsort \
 	sorting/mergesort \
+	sorting/quicksort \
 	trees/binarysearchtree \
+	trees/stringprefixtrie \
+	tables/hashtable \
 	dynamicprogramming/fibonacci \
 	dynamicprogramming/knapsack
 
