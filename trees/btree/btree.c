@@ -19,6 +19,35 @@
 #define NUM_KEYS 3
 
 /******************************************************************************
+ * Debug Macros
+ *****************************************************************************/
+
+#define INSERT_DEBUG 0
+#define SPLIT_DEBUG 0
+
+#if INSERT_DEBUG
+#define INSERT_DPRINTF(...) \
+    do { \
+        fprintf(stderr, __VA_ARGS__); \
+    } while (0)
+#else
+#define INSERT_DPRINTF(...) \
+    do { \
+    } while (0)
+#endif
+
+#if SPLIT_DEBUG
+#define SPLIT_DPRINTF(...) \
+    do { \
+        fprintf(stderr, __VA_ARGS__); \
+    } while (0)
+#else
+#define SPLIT_DPRINTF(...) \
+    do { \
+    } while (0)
+#endif
+
+/******************************************************************************
  * Objects
  *****************************************************************************/
 struct block;
@@ -39,10 +68,13 @@ typedef struct block {
  * Program globals.
  *****************************************************************************/
 static int counter = 0;
+static block_t *blockStorage[128];
 
 /******************************************************************************
  * Test code start
  *****************************************************************************/
+
+typedef void (*test_ptr_t)(void);
 
 /*
  * Test inserting nodes into the tree that trigger splits, and
@@ -54,6 +86,11 @@ static void test_insertBalance(void);
  * leave it empty.
  */
 static void test_deleteSimple(void);
+
+static void test_deleteCase3(void);
+static void test_deleteCase6(void);
+static void test_deleteCase7(void);
+static void test_deleteCase8(void);
 
 /******************************************************************************
  * Implementation start
@@ -89,6 +126,8 @@ static block_t *newBlock(void)
 {
     block_t *b = malloc(sizeof(block_t));
     memset(b, 0x00, sizeof(block_t));
+
+    blockStorage[counter] = b; /* for TDD. */
     b->id = counter++;
 
     return b;
@@ -152,7 +191,7 @@ static block_t *search(block_t *blk, int value)
 static void blockInsert(block_t *insert, key_t *promoted, block_t *newblk)
 {
     if (newblk) {
-        printf("blockInsert to blk: %d, key: %d, newblk: %d\n",
+        SPLIT_DPRINTF("blockInsert to blk: %d, key: %d, newblk: %d\n",
                 insert->id,
                 promoted->key,
                 newblk->id);
@@ -164,13 +203,13 @@ static void blockInsert(block_t *insert, key_t *promoted, block_t *newblk)
     insert->used++;
 
     if (NUM_KEYS == insert->used) {
-        printf("need to split %d\n", insert->id);
+        SPLIT_DPRINTF("need to split %d\n", insert->id);
 
         if (NULL == insert->parent) {
-            printf("need to split root variant\n");
+            SPLIT_DPRINTF("need to split root variant\n");
             return rootSplit(insert);
         } else {
-            printf("need to call normal block split\n");
+            SPLIT_DPRINTF("need to call normal block split\n");
             return blockSplit(insert);
         }
     }
@@ -187,8 +226,10 @@ static void blockSplit(block_t *blk)
     /* We've received blk, which is full, and we need to split it. */
 
     int i;
-    printf("blockSplit on %d\n", blk->id);
+    SPLIT_DPRINTF("blockSplit on %d\n", blk->id);
+#if SPLIT_DEBUG
     blockPrint(blk);
+#endif
 
     /*
      * XXX: This code is for splitting a leaf at present but I can likely make
@@ -229,13 +270,15 @@ static void blockSplit(block_t *blk)
         blk->keys[blk->used].ptr = middleSave.ptr;
     }
 
+#if SPLIT_DEBUG
     {
-        printf("blockSplit fin: \n");
-        printf("left: %d (parent: %d) ", blk->id, blk->parent->id);
+        SPLIT_DPRINTF("blockSplit fin: \n");
+        SPLIT_DPRINTF("left: %d (parent: %d) ", blk->id, blk->parent->id);
         blockPrint(blk);
-        printf("right: %d (parent: %d) ", newRight->id, newRight->parent->id);
+        SPLIT_DPRINTF("right: %d (parent: %d) ", newRight->id, newRight->parent->id);
         blockPrint(newRight);
     }
+#endif
 
     return blockInsert(blk->parent, &promote, newRight);
 }
@@ -249,8 +292,10 @@ static void rootSplit(block_t *root)
     /* find middle key in block. */
     int middleIndex = NUM_KEYS / 2;
 
-    printf("rootSplit...\n");
+    SPLIT_DPRINTF("rootSplit...\n");
+#if SPLIT_DEBUG
     blockPrint(root);
+#endif
 
     /* pointer to the middle key, the one that will remain. */
     key_t *middle = &(root->keys[middleIndex]);
@@ -364,6 +409,7 @@ static void rotateRight(block_t *lSibling, block_t *me)
 
     /* decrement before retrieval (for slickness :P). */
     promote = lSibling->keys[--lSibling->used].key;
+    lSibling->keys[lSibling->used].key = 0; /* set value to 0; just in case. */
 
     /* Because we know that we're simply rotating from a left sibling, we
      * know that the key that points to the left sibling.
@@ -612,14 +658,14 @@ static void insert(block_t *root, int value)
     int i;
     int found = 0;
 
-    printf("\nentered insert: %d\n", value);
+    INSERT_DPRINTF("\nentered insert: %d\n", value);
 
     /* first dude ever; could be called if all deleted. */
     if (0 == root->used) {
         root->used++;
         root->keys[0].key = value;
 
-        printf("placed 0th root entry\n");
+        INSERT_DPRINTF("placed 0th root entry\n");
         return;
     }
 
@@ -658,7 +704,7 @@ static void insert(block_t *root, int value)
         }
     }
 
-    printf("found block: %d\n", where->id);
+    INSERT_DPRINTF("found block: %d\n", where->id);
 
     /*
      * let's check this block to see if it goes there.
@@ -703,7 +749,7 @@ static void insert(block_t *root, int value)
 
     /* ok, now do we need to split where? */
     if (NUM_KEYS == where->used) {
-        printf("need to split\n");
+        INSERT_DPRINTF("need to split\n");
 
         if (NULL == where->parent) {
             /* root split is different. */
@@ -799,14 +845,13 @@ static void test_insertBalance(void)
     block_t *f;
     block_t *root = NULL;
 
-    counter = 0; /* to make it easier on humans. */
+    printf("testing insert with double split\n");
 
     root = newBlock();
     assert(NULL != root);
 
     for (i = first; i < (first + count); i++) {
         insert(root, i);
-        //depthFirstPrint(root);
     }
 
     printf("\n\n");
@@ -831,17 +876,16 @@ static void test_deleteSimple(void)
     block_t *f;
     block_t *root = NULL;
 
-    counter = 0; /* to make it easier on humans. */
+    printf("testing delete leaf basic\n");
 
     root = newBlock();
     assert(NULL != root);
 
     for (i = first; i < (first + count); i++) {
         insert(root, i);
-        //depthFirstPrint(root);
     }
 
-    printf("\n\n");
+    printf("\nfully-built:\n\n");
     depthFirstPrint(root);
 
     /* verify we can find all nodes entered in. */
@@ -861,7 +905,7 @@ static void test_deleteSimple(void)
         }
     }
 
-    printf("\n\n");
+    printf("\npost-delete:\n\n");
     depthFirstPrint(root);
 
     depthFirstFree(root);
@@ -889,7 +933,7 @@ static void test_deleteCase3(void)
     block_t *f;
     block_t *root = NULL;
 
-    counter = 0; /* to make it easier on humans. */
+    printf("testing delete leaf case 3\n");
 
     root = newBlock();
     assert(NULL != root);
@@ -916,7 +960,146 @@ static void test_deleteCase3(void)
     return;
 }
 
-// XXX: 6, 7, 8 (also rotateRight)
+/*
+ * This is leaf delete case 6.
+ *
+ *      |4|                        |4|
+ *    /      \                   /      \
+ *   |2|     |6|9|        =>    |2|     |6|8|
+ *  /  \    /  \     \         /  \    /   \   \
+ * |1| |3| |5| |7|8| |10|     |1| |3| |5|  |7| |9|
+ *
+ * Deleting 10, we rotate right because the left sibling has sufficient keys.
+ *
+ * To create this, we did insert: 1-7, 10, 9, 8
+ */
+static void test_deleteCase6(void)
+{
+    int i;
+    int input[] = {1, 2, 3, 4, 5, 6, 7, 10, 9, 8};
+    block_t *f;
+    block_t *root = NULL;
+
+    printf("testing delete leaf case 6\n");
+
+    root = newBlock();
+    assert(NULL != root);
+
+    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+        insert(root, input[i]);
+    }
+
+    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+        f = search(root, input[i]);
+        assert(NULL != f);
+    }
+
+    printf("\nfully-built:\n\n");
+    depthFirstPrint(root);
+
+    delete(root, 10);
+
+    printf("\npost-delete:\n\n");
+    depthFirstPrint(root);
+
+    depthFirstFree(root);
+
+    return;
+}
+
+/*
+ * This is leaf delete case 7.
+ *
+ *      |4|                           |4|
+ *    /      \                      /      \
+ *   |2|     |15|25|         =>    |2|     |14|25|
+ *  /  \    /      \    \         /  \    /   \    \
+ * |1| |3| |10|14| |20| |30|     |1| |3| |10| |15| |30|
+ *
+ * Deleting 20, we rotate right because the left sibling has sufficient keys.
+ *
+ * To create this, we did insert: 1-4, 10, 15, 20, 25, 30, 14
+ */
+static void test_deleteCase7(void)
+{
+    int i;
+    int input[] = {1, 2, 3, 4, 10, 15, 20, 25, 30, 14};
+    block_t *f;
+    block_t *root = NULL;
+
+    printf("testing delete leaf case 7\n");
+
+    root = newBlock();
+    assert(NULL != root);
+
+    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+        insert(root, input[i]);
+    }
+
+    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+        f = search(root, input[i]);
+        assert(NULL != f);
+    }
+
+    printf("\nfully-built:\n\n");
+    depthFirstPrint(root);
+
+    delete(root, 20);
+
+    printf("\npost-delete:\n\n");
+    depthFirstPrint(root);
+
+    depthFirstFree(root);
+
+    return;
+}
+
+/*
+ * This is leaf delete case 8.
+ *
+ *      |4|                              |4|
+ *    /      \                         /      \
+ *   |2|     |15|25|            =>    |2|     |14|25|
+ *  /  \    /     \    \            /  \    /   \    \
+ * |1| |3| |10|14| |20| |30|31|     |1| |3| |10| |15| |30|31|
+ *
+ * Deleting 20, we rotate right because the left sibling has sufficient keys.
+ *
+ * To create this, we did insert: 1-4, 10, 15, 20, 25, 30, 14, 31
+ */
+static void test_deleteCase8(void)
+{
+    int i;
+    int input[] = {1, 2, 3, 4, 10, 15, 20, 25, 30, 14, 31};
+    block_t *f;
+    block_t *root = NULL;
+
+    printf("testing delete leaf case 7\n");
+
+    root = newBlock();
+    assert(NULL != root);
+
+    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+        insert(root, input[i]);
+    }
+
+    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+        f = search(root, input[i]);
+        assert(NULL != f);
+    }
+
+    printf("\nfully-built:\n\n");
+    depthFirstPrint(root);
+
+    delete(root, 20);
+
+    printf("\npost-delete:\n\n");
+    depthFirstPrint(root);
+
+    depthFirstFree(root);
+
+    return;
+}
 
 /*
  * In this case, the parent has more than one key, but all of the siblings have
@@ -1003,6 +1186,7 @@ static void test_deleteCase4(void)
 
 int main(void)
 {
+    int i;
     /*
      * Prevent innocuous code changes from breaking code that made reasonable
      * assumptions.
@@ -1010,9 +1194,20 @@ int main(void)
     assert(80 == sizeof(block_t));
     assert(16 == offsetof(block_t, keys));
 
-    //test_insertBalance();
-    //test_deleteSimple();
-    test_deleteCase3();
+    test_ptr_t tests[] = {
+            test_insertBalance,
+            test_deleteCase3,
+            test_deleteCase6,
+            test_deleteCase7,
+            test_deleteCase8,
+    };
+
+    for (i = 0; i < NUM_ELEMENTS(tests); i++) {
+        counter = 0; /* to make it easier on humans. */
+        memset(blockStorage, 0x00, sizeof(blockStorage));
+        printf("-----------------------------------------------------------\n");
+        tests[i]();
+    }
 
     return 0;
 }
