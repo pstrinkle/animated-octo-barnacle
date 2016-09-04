@@ -1,9 +1,16 @@
+/*
+ * Basic implementation of a B-tree.
+ */
 
 #include <assert.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
+/******************************************************************************
+ * Macros
+ *****************************************************************************/
 #define NUM_ELEMENTS(X) (sizeof(X)/sizeof(*X))
 
 /*
@@ -11,11 +18,14 @@
  */
 #define NUM_KEYS 3
 
+/******************************************************************************
+ * Objects
+ *****************************************************************************/
 struct block;
 
 typedef struct key {
-    struct block *ptr;
-    int key;
+    struct block *ptr; /* child block. */
+    int key; /* the value. */
 } key_t;
 
 typedef struct block {
@@ -25,16 +35,32 @@ typedef struct block {
     key_t keys[NUM_KEYS+1]; /* so that there's a trailing pointer. */
 } block_t;
 
+/******************************************************************************
+ * Program globals.
+ *****************************************************************************/
 static int counter = 0;
 
-static block_t *newBlock(void)
-{
-    block_t *b = malloc(sizeof(block_t));
-    memset(b, 0x00, sizeof(block_t));
-    b->id = counter++;
+/******************************************************************************
+ * Test code start
+ *****************************************************************************/
 
-    return b;
-}
+/*
+ * Test inserting nodes into the tree that trigger splits, and
+ * multiple-recursive splits.
+ */
+static void test_insertBalance(void);
+/*
+ * Test building a simple tree, and deleting a key from a leaf that doesn't
+ * leave it empty.
+ */
+static void test_deleteSimple(void);
+
+/******************************************************************************
+ * Implementation start
+ *****************************************************************************/
+
+/* create a new empty block. */
+static block_t *newBlock(void);
 
 /* insert a promoted key into the block. */
 static void blockInsert(block_t *insert, key_t *promoted, block_t *newblk);
@@ -49,11 +75,20 @@ static void blockPrint(block_t *blk);
 /* print each block in a dfs pattern. */
 static void depthFirstPrint(block_t *blk);
 
+static block_t *newBlock(void)
+{
+    block_t *b = malloc(sizeof(block_t));
+    memset(b, 0x00, sizeof(block_t));
+    b->id = counter++;
+
+    return b;
+}
+
 /**
- * @return 0 if not found
- * @return 1 if found.
+ * @return NULL if not found
+ * @return block ptr if found.
  */
-static int search(block_t *blk, int value)
+static block_t *search(block_t *blk, int value)
 {
     block_t *where;
     key_t *curr;
@@ -97,7 +132,11 @@ static int search(block_t *blk, int value)
         }
     }
 
-    return found;
+    if (!found) {
+        return NULL;
+    }
+
+    return where;
 }
 
 static void blockInsert(block_t *insert, key_t *promoted, block_t *newblk)
@@ -267,9 +306,97 @@ static void rootSplit(block_t *root)
     return;
 }
 
+static void deleteLeaf(block_t *where, key_t *curr)
+{
+    /* we know it's a leaf, so we delete it, then, we need to check if that was
+     * the last item in the block.
+     */
+
+    /*
+     * A leaf cannot have all three, A, B, and C, because it would be split
+     * if the block holds maximum 3.  So, this can be expanded generically
+     * easily (and is done so below).
+     *
+     * -----------------
+     * | A | B | C | X |
+     * -----------------
+     *
+     * If curr is C, then we want to copy X over it, which we know will be
+     * empty.  If curr is B, or A, we want to copy from the next to the end
+     * over it.
+     *
+     * curr cannot be X. :D  Which is a handy thing to know.
+     */
+    key_t *start = curr + 1;
+    block_t *end = where + 1; /* points immediately after X's end. */
+    size_t len = (size_t)end - (size_t)start;
+    memcpy(curr, start, len);
+    where->used--;
+
+    if (where->used) {
+        return; /* yay, bail! */
+    }
+
+    /* if this is root. */
+    if (!where->parent) {
+        fprintf(stderr, "root node is empty!\n");
+        return;
+    }
+
+    fprintf(stderr, "the leaf block is now empty!\n");
+
+    /* Ok, so we now have an empty block, so we need to recursively try to
+     * merge and re-balance the tree.
+     *
+     * This could just mean a pull or a rotate depending, and that might be the
+     * end of it.
+     */
+
+    /* Check the parent, if they're greater than floor(NUM_KEYS/2), then we can
+     * safely pull them down.  Otherwise, we need to rotate; could still leave
+     * issues that need to be balanced.
+     */
+
+    /* I enumerated 8 different interesting cases for basic leaf deletion,
+     * however there are more cases if recursion is required.
+     */
+
+    return;
+}
+
 static void delete(block_t *root, int value)
 {
+    int i;
+    key_t *curr;
+    int leaf = 0;
 
+    /* 1. Find the block. */
+    block_t *where = search(root, value);
+
+    if (!where) {
+        return;
+    }
+
+    /* 2. Find the key, check if it's a leaf. */
+    for (i = 0; i < where->used; i++) {
+        curr = &(where->keys[i]);
+
+        if (value == curr->key) {
+            if (!curr->ptr) {
+                leaf = 1;
+            }
+            break;
+        }
+    }
+
+    if (leaf) {
+        /* 3a. Handle leaf deletion. */
+        deleteLeaf(where, curr);
+    } else {
+        /* 3b. Handle parent deletion. */
+        fprintf(stderr, "this node has children!\n");
+        //deleteInternal();
+    }
 }
 
 static void insert(block_t *root, int value)
@@ -454,37 +581,95 @@ static void depthFirstFree(block_t *blk)
     free(blk);
 }
 
-int main(void)
+static void test_insertBalance(void)
 {
-    int f;
     int i;
+    int first = 1;
+    int count = 50;
+    block_t *f;
     block_t *root = NULL;
 
-#define FIRSTVALUE 1
-#define INSERTCOUNT 50
-#define POSTLASTVALUE (FIRSTVALUE + INSERTCOUNT)
+    counter = 0; /* to make it easier on humans. */
 
-    if (NULL == root) {
-        root = newBlock();
-    }
-
+    root = newBlock();
     assert(NULL != root);
 
-    for (i = FIRSTVALUE; i < POSTLASTVALUE; i++) {
+    for (i = first; i < (first + count); i++) {
         insert(root, i);
-        depthFirstPrint(root);
+        //depthFirstPrint(root);
     }
 
     printf("\n\n");
     depthFirstPrint(root);
 
     /* verify we can find all nodes entered in. */
-    for (i = FIRSTVALUE; i < POSTLASTVALUE; i++) {
+    for (i = first; i < (first + count); i++) {
         f = search(root, i);
-        assert(f == 1);
+        assert(NULL != f);
     }
 
     depthFirstFree(root);
+
+    return;
+}
+
+static void test_deleteSimple(void)
+{
+    int i;
+    int first = 1;
+    int count = 4;
+    block_t *f;
+    block_t *root = NULL;
+
+    counter = 0; /* to make it easier on humans. */
+
+    root = newBlock();
+    assert(NULL != root);
+
+    for (i = first; i < (first + count); i++) {
+        insert(root, i);
+        //depthFirstPrint(root);
+    }
+
+    printf("\n\n");
+    depthFirstPrint(root);
+
+    /* verify we can find all nodes entered in. */
+    for (i = first; i < (first + count); i++) {
+        f = search(root, i);
+        assert(NULL != f);
+    }
+
+    delete(root, 4);
+
+    for (i = first; i < (first + count); i++) {
+        f = search(root, i);
+        if (i == count) {
+            assert(NULL == f);
+        } else {
+            assert(NULL != f);
+        }
+    }
+
+    printf("\n\n");
+    depthFirstPrint(root);
+
+    depthFirstFree(root);
+
+    return;
+}
+
+int main(void)
+{
+    /*
+     * Prevent innocuous code changes from breaking code that made reasonable
+     * assumptions.
+     */
+    assert(80 == sizeof(block_t));
+    assert(16 == offsetof(block_t, keys));
+
+    test_insertBalance();
+    test_deleteSimple();
 
     return 0;
 }
