@@ -62,7 +62,9 @@ static void test_deleteSimple(void);
 /* create a new empty block. */
 static block_t *newBlock(void);
 
-/* insert a promoted key into the block. */
+/*
+ * Append a key into a block's list, always append, newblk can be NULL.
+ */
 static void blockInsert(block_t *insert, key_t *promoted, block_t *newblk);
 /* split a normal block. */
 static void blockSplit(block_t *blk);
@@ -71,6 +73,14 @@ static void rootSplit(block_t *root);
 /* insert the value into the tree starting at the specified block. */
 static void insert(block_t *root, int value);
 /* print one block. */
+
+static block_t *findLeftSibling(block_t *me);
+static void rotateRight(block_t *lSibling, block_t *me);
+static block_t *findRightSibling(block_t *me);
+
+static void deleteLeaf(block_t *where, key_t *curr);
+static void delete(block_t *root, int value);
+
 static void blockPrint(block_t *blk);
 /* print each block in a dfs pattern. */
 static void depthFirstPrint(block_t *blk);
@@ -141,10 +151,12 @@ static block_t *search(block_t *blk, int value)
 
 static void blockInsert(block_t *insert, key_t *promoted, block_t *newblk)
 {
-    printf("blockInsert to blk: %d, key: %d, newblk: %d\n",
-            insert->id,
-            promoted->key,
-            newblk->id);
+    if (newblk) {
+        printf("blockInsert to blk: %d, key: %d, newblk: %d\n",
+                insert->id,
+                promoted->key,
+                newblk->id);
+    }
 
     insert->keys[insert->used].key = promoted->key; /* i think this is good.. */
 
@@ -306,8 +318,98 @@ static void rootSplit(block_t *root)
     return;
 }
 
+/*
+ * Find the pointer in me->parent that points to me's immediate left neighbor.
+ *
+ * ;)
+ */
+static block_t *findLeftSibling(block_t *me)
+{
+    int i;
+    block_t *parent = me->parent;
+
+    /* Check all possible pointers, which includes one after ->used */
+    for (i = 0; i <= NUM_KEYS; i++) {
+        if (parent->keys[i].ptr == me) {
+            if (i == 0) {
+                return NULL; /* no left sibling. */
+            } else {
+                return parent->keys[i-1].ptr;
+            }
+        }
+    }
+
+    return NULL; /* weird, not really possible. */
+}
+
+static void rotateRight(block_t *lSibling, block_t *me)
+{
+    int i;
+    block_t *parent = me->parent;
+    /*
+     * XXX: yes, b-tree of integers for now, but this is easy to generalize.
+     */
+    int promote;
+    key_t demote;
+
+    /* We need to pull the last key from lSibling, and erase it.  Nothing
+     * fancy required here because it's always the last key and it's a leaf.
+     *
+     * XXX: Later, if I need to use a rotateRight in another case, say, for
+     * internal node, it might _not_ be a leaf, and this code would then be
+     * incorrect.  I could do a quick check for now and assert that lSibling
+     * and me are leaves, but for now, I'll just review these todos when I
+     * start working on internal node deletion.
+     */
+
+    /* decrement before retrieval (for slickness :P). */
+    promote = lSibling->keys[--lSibling->used].key;
+
+    /* Because we know that we're simply rotating from a left sibling, we
+     * know that the key that points to the left sibling.
+     *
+     * Basic cases: 3, 6, 7, 8
+     *
+     * So we don't need to worry about the case where the pointer is after the
+     * value we need to pull, that's only for rotateLeft. ;)
+     */
+    for (i = 0; i <= NUM_KEYS; i++) {
+        if (parent->keys[i].ptr == lSibling) {
+            demote.key = parent->keys[i].key;
+            demote.ptr = NULL;
+            parent->keys[i].key = promote;
+            break;
+        }
+    }
+
+    /* insert it into the suddenly empty leaf node. */
+    blockInsert(me, &demote, NULL);
+
+    return;
+}
+
+static block_t *findRightSibling(block_t *me)
+{
+    int i;
+    block_t *parent = me->parent;
+
+    for (i = 0; i <= NUM_KEYS; i++) {
+        if (parent->keys[i].ptr == me) {
+            if (i == NUM_KEYS) {
+                return NULL;
+            } else {
+                return parent->keys[i+1].ptr;
+            }
+        }
+    }
+
+    return NULL; /* where, not really possible. */
+}
+
 static void deleteLeaf(block_t *where, key_t *curr)
 {
+    block_t *lSibling, *rSibling;
+
     /* we know it's a leaf, so we delete it, then, we need to check if that was
      * the last item in the block.
      */
@@ -345,21 +447,125 @@ static void deleteLeaf(block_t *where, key_t *curr)
 
     fprintf(stderr, "the leaf block is now empty!\n");
 
-    /* Ok, so we now have an empty block, so we need to recursively try to
+    /*
+     * Ok, so we now have an empty block, so we need to recursively try to
      * merge and re-balance the tree.
      *
      * This could just mean a pull or a rotate depending, and that might be the
      * end of it.
-     */
-
-    /* Check the parent, if they're greater than floor(NUM_KEYS/2), then we can
-     * safely pull them down.  Otherwise, we need to rotate; could still leave
-     * issues that need to be balanced.
-     */
-
-    /* I enumerated 8 different interesting cases for basic leaf deletion,
+     *
+     *
+     * I enumerated 8 different interesting cases for basic leaf deletion,
      * however there are more cases if recursion is required.
+     *
+     * Basically, the parent block is either sufficiently filled, or
+     * insufficiently filled and the sibling or siblings can be sufficient or
+     * insufficient.  The definition here for insufficient means, that there is
+     * only one key in the block, and therefore moving that key or promoting it
+     * will leave us with an empty block.
      */
+
+    /*
+     * XXX: This code only checks immediate siblings for rotation, whereas
+     * really; to be generic, it could roll siblings along if any sibling has
+     * > 1 key in it.
+     */
+
+    /*
+     * suff. == sufficient
+     * rot. == rotate
+     * -> == right
+     * <- left (obviously, ;) )
+     *
+     * from my basic 8 cases, I made the following table:
+     *
+     * | case | parent | left    | right   | action  |
+     * |      | suff.  | sibling | sibling |         |
+     * |      |        | suff.   | suff.   |         |
+     * -----------------------------------------------
+     * | 1    | N      | N       | N       | +       |
+     * -----------------------------------------------
+     * | 2    | N      | N       | Y       | rot. <- |
+     * -----------------------------------------------
+     * | 3    | N      | Y       | N       | rot. -> |
+     * -----------------------------------------------
+     * | 4    | Y      | N       | N       | ++      |
+     * -----------------------------------------------
+     * | 5    | Y      | N       | Y       | rot. <- |
+     * -----------------------------------------------
+     * | 6    | Y      | Y       | N       | rot. -> |
+     * -----------------------------------------------
+     * | 7    | Y      | Y       | N       | rot. -> |
+     * -----------------------------------------------
+     * | 8    | Y      | Y       | Y       | rot. -> |
+     * -----------------------------------------------
+     *
+     * + more complex; detailed later.
+     * ++ push neighbor down, free block, three variations for immediate
+     * siblings.
+     *
+     * From this table I was able to readily see that the parent's sufficiency
+     * isn't the lynchpin, it's the siblings.
+     *
+     * My implementation will favor left rotation, which is just an arbitrary
+     * decision.  I could balance with a coin flip in that case, but meh, this
+     * is faster only because it doesn't waste time flipping coins and produces
+     * the same balanced tree.
+     */
+
+    /*
+     * Determine if immediate siblings are sufficient.
+     *
+     * XXX: make generic and check all siblings and roll them when necessary to
+     * then re-check immediate siblings.
+     */
+
+    /*
+     * find siblings, you seriously will have at least one, we know that by the
+     * balanced tree properties.
+     */
+    lSibling = findLeftSibling(where);
+    rSibling = findRightSibling(where);
+
+    fprintf(stderr,
+            "left sibling: 0x%x, right sibling: 0x%x\n",
+            lSibling,
+            rSibling);
+
+    /* both siblings are valid, but insufficient */
+    if ((lSibling && lSibling->used == 1) &&
+        (rSibling && rSibling->used == 1)) {
+
+        fprintf(stderr,
+                "left sibling and right sibling are insufficient (case 1 or 4)\n");
+        return;
+    }
+
+    if (lSibling && lSibling->used > 1) {
+        /*
+         * If there is a left sibling and it's valid, we don't care about the
+         * right.
+         */
+
+        /* rotate right. */
+        return rotateRight(lSibling, where);
+
+        /* pull last key from left sibling, make it the parent key that points
+         * back down to me, and insert into me, the parent key.
+         */
+
+    } else {
+        /*
+         * If no left sibling, or left sibling not valid, the right sibling
+         * exists and is valid.
+         */
+
+        /* rotate left. */
+
+        /* pull first key from the sibling, make it the parent key that points
+         * back down to me, and insert into me, the parent key.
+         */
+    }
 
     return;
 }
@@ -464,6 +670,10 @@ static void insert(block_t *root, int value)
     /*
      * Really don't need to find this again; except later i may split up
      * finding the block and finding where it goes.
+     *
+     * XXX: Could do this via insertblock if I upgrade that code to not always
+     * just append into the block; making it more general should be helpful
+     * regardless.
      */
     for (i = 0; i < where->used; i++) {
         curr = &(where->keys[i]);
@@ -659,6 +869,138 @@ static void test_deleteSimple(void)
     return;
 }
 
+/*
+ * This is leaf delete case 3.
+ *
+ *      |4|                   |4|
+ *    /      \              /      \
+ *   |2|     |8|     =>    |2|     |6|
+ *  /  \    /    \        /  \    /   \
+ * |1| |3| |5|6| |9|     |1| |3| |5| |8|
+ *
+ * Deleting 9, we rotate right because the left sibling has sufficient keys.
+ *
+ * To create this, we did insert: 1-5, 8, 9, 6.
+ */
+static void test_deleteCase3(void)
+{
+    int i;
+    int input[] = {1, 2, 3, 4, 5, 8, 9, 6};
+    block_t *f;
+    block_t *root = NULL;
+
+    counter = 0; /* to make it easier on humans. */
+
+    root = newBlock();
+    assert(NULL != root);
+
+    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+        insert(root, input[i]);
+    }
+
+    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+        f = search(root, input[i]);
+        assert(NULL != f);
+    }
+
+    printf("\nfully-built:\n\n");
+    depthFirstPrint(root);
+
+    delete(root, 9);
+
+    printf("\npost-delete:\n\n");
+    depthFirstPrint(root);
+
+    depthFirstFree(root);
+
+    return;
+}
+
+// XXX: 6, 7, 8 (also rotateRight)
+
+/*
+ * In this case, the parent has more than one key, but all of the siblings have
+ * one key each.
+ *
+ * For internal reference, this is case 4.
+ *
+ *      |4|
+ *   /       \
+ *  |2|      |6|8|
+ *  /  \    /  \  \
+ * |1| |3| |5| |7| |9|
+ *
+ * Gotta love the attempt as ascii tree art. :D
+ *
+ * In this case, what happens when 9 is deleted?
+ *
+ * 1. Delete 9, see the block is empty so we check the conditions:
+ *  - Is the parent sufficient to be demoted?
+ *  - Are the siblings sufficient to be promoted?
+ *
+ * Being this is the first of my non-super-trivial implementation tests (yay
+ * making time for TDD), I will be more thorough in explanation (I presume).
+ *
+ * However, this implementation really is _only_ for me.  It _is_ open source,
+ * and I'd be happy if anyone else found value from this, if nothing else, as
+ * a different walkthrough of the data structure than you might find elsewhere.
+ *
+ * XXX: Although by implementing these tests, they really aren't sufficient to
+ * verify the code, beyond, the links between the blocks are properly
+ * maintained; unless I implement a nice method to verify each block... which I
+ * could do, and would definitely benefit from if this were more than just for
+ * fun.
+ */
+#if 0
+static void test_deleteCase4(void)
+{
+    int i;
+    int first = 1;
+    int count = 9;
+    block_t *f;
+    block_t *root = NULL;
+
+    counter = 0; /* to make it easier on humans. */
+
+    root = newBlock();
+    assert(NULL != root);
+
+    for (i = first; i < (first + count); i++) {
+        insert(root, i);
+        //depthFirstPrint(root);
+    }
+
+    printf("\n\n");
+    depthFirstPrint(root);
+
+    /* verify we can find all nodes entered in. */
+    for (i = first; i < (first + count); i++) {
+        f = search(root, i);
+        assert(NULL != f);
+    }
+
+    //delete(root, 4);
+
+#if 0
+    for (i = first; i < (first + count); i++) {
+        f = search(root, i);
+        if (i == count) {
+            assert(NULL == f);
+        } else {
+            assert(NULL != f);
+        }
+    }
+#endif
+
+    printf("\n\n");
+    depthFirstPrint(root);
+
+    depthFirstFree(root);
+
+    return;
+}
+#endif
+
 int main(void)
 {
     /*
@@ -668,8 +1010,9 @@ int main(void)
     assert(80 == sizeof(block_t));
     assert(16 == offsetof(block_t, keys));
 
-    test_insertBalance();
-    test_deleteSimple();
+    //test_insertBalance();
+    //test_deleteSimple();
+    test_deleteCase3();
 
     return 0;
 }
