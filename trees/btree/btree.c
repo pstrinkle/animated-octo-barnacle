@@ -81,22 +81,6 @@ typedef void (*test_ptr_t)(void);
 
 static int test_verifyBlock(int block, int *values, int count);
 
-/*
- * Test inserting nodes into the tree that trigger splits, and
- * multiple-recursive splits.
- */
-static void test_insertBalance(void);
-/*
- * Test building a simple tree, and deleting a key from a leaf that doesn't
- * leave it empty.
- */
-static void test_deleteLeafFirstSimple(void);
-static void test_deleteLeafEndSimple(void);
-static void test_deleteCase3(void);
-static void test_deleteCase6(void);
-static void test_deleteCase7(void);
-static void test_deleteCase8(void);
-
 /******************************************************************************
  * Implementation start
  *****************************************************************************/
@@ -1193,6 +1177,124 @@ static void test_deleteCase3(void)
 }
 
 /*
+ * This is leaf delete case 5a.
+ *
+ *      |4|                        |4|
+ *    /      \                   /      \
+ *   |2|     |6|8|        =>    |2|     |6|9|
+ *  /  \    /  \  \             /  \    /   \   \
+ * |1| |3| |5| |7| |9|10|      |1| |3| |5|  |8| |10|
+ *
+ * Deleting 7, we rotate left because the right sibling has sufficient keys.
+ *
+ * To create this, we did insert: 1-10.
+ */
+static void test_deleteCase5a(void)
+{
+    int i;
+    int input[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    block_t *f;
+    block_t *root = NULL;
+
+    printf("testing delete leaf case 5a\n");
+
+    root = newBlock();
+    assert(NULL != root);
+
+    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+        insert(root, input[i]);
+    }
+
+    printf("\nfully-built:\n\n");
+    depthFirstPrint(root);
+
+    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+        f = search(root, input[i]);
+        assert(NULL != f);
+    }
+
+    delete(root, 7);
+
+    printf("\npost-delete:\n\n");
+    depthFirstPrint(root);
+
+    // test it!
+    {
+        for (i = 0; i < NUM_ELEMENTS(input); i++) {
+            f = search(root, input[i]);
+            if (input[i] == 7) {
+                assert(NULL == f);
+            } else {
+                assert(NULL != f);
+            }
+        }
+    }
+
+    depthFirstFree(root);
+
+    return;
+}
+
+/*
+ * This is leaf delete case 5b.
+ *
+ *      |4|                        |4|
+ *    /      \                   /      \
+ *   |2|     |6|9|        =>    |2|     |7|9|
+ *  /  \    /  \     \          /  \    /   \   \
+ * |1| |3| |5| |7|8| |11|      |1| |3| |6|  |8| |11|
+ *
+ * Deleting 5, we rotate left because the right sibling has sufficient keys.
+ *
+ * To create this, we did insert: 1-7, 9, 11, 8.
+ */
+static void test_deleteCase5b(void)
+{
+    int i;
+    int input[] = {1, 2, 3, 4, 5, 6, 7, 9, 11, 8};
+    block_t *f;
+    block_t *root = NULL;
+
+    printf("testing delete leaf case 5b\n");
+
+    root = newBlock();
+    assert(NULL != root);
+
+    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+        insert(root, input[i]);
+    }
+
+    printf("\nfully-built:\n\n");
+    depthFirstPrint(root);
+
+    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+        f = search(root, input[i]);
+        assert(NULL != f);
+    }
+
+    delete(root, 5);
+
+    printf("\npost-delete:\n\n");
+    depthFirstPrint(root);
+
+    // test it!
+    {
+        for (i = 0; i < NUM_ELEMENTS(input); i++) {
+            f = search(root, input[i]);
+            if (input[i] == 5) {
+                assert(NULL == f);
+            } else {
+                assert(NULL != f);
+            }
+        }
+    }
+
+    depthFirstFree(root);
+
+    return;
+}
+
+/*
  * This is leaf delete case 6.
  *
  *      |4|                        |4|
@@ -1435,6 +1537,8 @@ int main(void)
             test_deleteCase7,
             test_deleteCase8,
             test_deleteCase2,
+            test_deleteCase5a,
+            test_deleteCase5b,
     };
 
     for (i = 0; i < NUM_ELEMENTS(tests); i++) {
