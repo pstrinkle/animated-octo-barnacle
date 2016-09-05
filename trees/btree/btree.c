@@ -1,5 +1,9 @@
 /*
  * Basic implementation of a B-tree.
+ *
+ * Just about all my test cases delete the right-most key.  They don't all, but
+ * too many do.  I think I favor testing this; so I should be a bit more
+ * programmatically thorough. :D
  */
 
 #include <assert.h>
@@ -543,9 +547,10 @@ static void demoteParent(block_t *me)
 
 static void deleteLeaf(block_t *where, key_t *curr)
 {
-    block_t *lSibling, *rSibling;
+    block_t *lSib, *rSib;
 
-    /* we know it's a leaf, so we delete it, then, we need to check if that was
+    /*
+     * We know it's a leaf, so we delete it, then, we need to check if that was
      * the last item in the block.
      */
 
@@ -655,17 +660,17 @@ static void deleteLeaf(block_t *where, key_t *curr)
      * Find siblings, you seriously will have at least one, we know that by the
      * balanced tree properties.
      */
-    lSibling = findLeftSibling(where);
-    rSibling = findRightSibling(where);
+    lSib = findLeftSibling(where);
+    rSib = findRightSibling(where);
 
     fprintf(stderr,
             "left sibling: 0x%x, right sibling: 0x%x\n",
-            lSibling,
-            rSibling);
+            lSib,
+            rSib);
 
 
     /* You only have a left sibling and it's insufficient. */
-    if (lSibling && !rSibling && lSibling->used == 1) {
+    if (lSib && !rSib && lSib->used == 1) {
         if (where->parent->used > 1) {
             /* Case 4 */
             demoteParent(where);
@@ -678,8 +683,7 @@ static void deleteLeaf(block_t *where, key_t *curr)
     }
 
     /* You only have a right sibling and it's insufficient. */
-    if (rSibling && !lSibling && rSibling->used == 1) {
-
+    if (rSib && !lSib && rSib->used == 1) {
         if (where->parent->used > 1) {
             /* Case 4 */
             demoteParent(where);
@@ -692,9 +696,7 @@ static void deleteLeaf(block_t *where, key_t *curr)
     }
 
     /* Both siblings are valid, but insufficient */
-    if ((lSibling && lSibling->used == 1) &&
-        (rSibling && rSibling->used == 1)) {
-
+    if ((lSib && lSib->used == 1) && (rSib && rSib->used == 1)) {
         if (where->parent->used > 1) {
             /* Case 4 */
             demoteParent(where);
@@ -713,14 +715,14 @@ static void deleteLeaf(block_t *where, key_t *curr)
         return;
     }
 
-    if (lSibling && lSibling->used > 1) {
+    if (lSib && lSib->used > 1) {
         /*
          * If there is a left sibling and it's valid, we don't care about the
          * right.
          */
 
         /* rotate right. */
-        return rotateRight(lSibling, where);
+        return rotateRight(lSib, where);
     } else {
         /*
          * If no left sibling, or left sibling not valid, the right sibling
@@ -728,7 +730,7 @@ static void deleteLeaf(block_t *where, key_t *curr)
          */
 
         /* rotate left. */
-        return rotateLeft(rSibling, where);
+        return rotateLeft(rSib, where);
     }
 
     return;
