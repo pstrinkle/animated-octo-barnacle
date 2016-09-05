@@ -11,6 +11,7 @@
 /******************************************************************************
  * Macros
  *****************************************************************************/
+
 #define NUM_ELEMENTS(X) (sizeof(X)/sizeof(*X))
 
 /*
@@ -50,6 +51,7 @@
 /******************************************************************************
  * Objects
  *****************************************************************************/
+
 struct block;
 
 typedef struct key {
@@ -67,6 +69,7 @@ typedef struct block {
 /******************************************************************************
  * Program globals.
  *****************************************************************************/
+
 static int counter = 0;
 static block_t *blockStorage[128];
 
@@ -75,6 +78,8 @@ static block_t *blockStorage[128];
  *****************************************************************************/
 
 typedef void (*test_ptr_t)(void);
+
+static int test_verifyBlock(int block, int *values, int count);
 
 /*
  * Test inserting nodes into the tree that trigger splits, and
@@ -85,8 +90,8 @@ static void test_insertBalance(void);
  * Test building a simple tree, and deleting a key from a leaf that doesn't
  * leave it empty.
  */
-static void test_deleteSimple(void);
-
+static void test_deleteLeafFirstSimple(void);
+static void test_deleteLeafEndSimple(void);
 static void test_deleteCase3(void);
 static void test_deleteCase6(void);
 static void test_deleteCase7(void);
@@ -114,6 +119,7 @@ static void insert(block_t *root, int value);
 static block_t *findLeftSibling(block_t *me);
 static void rotateRight(block_t *lSibling, block_t *me);
 static block_t *findRightSibling(block_t *me);
+static void rotateLeft(block_t *rSibling, block_t *me);
 
 static void deleteLeaf(block_t *where, key_t *curr);
 static void delete(block_t *root, int value);
@@ -452,6 +458,56 @@ static block_t *findRightSibling(block_t *me)
     return NULL; /* where, not really possible. */
 }
 
+static void rotateLeft(block_t *rSibling, block_t *me)
+{
+    int i;
+    block_t *parent = me->parent;
+    /*
+     * XXX: yes, b-tree of integers for now, but this is easy to generalize.
+     */
+    int promote;
+    key_t demote;
+
+    /*
+     * We want the 0th entry from the right sibling to be promoted, however,
+     * this does require slightly more effort because we basically need to then
+     * shift the block contents left (like we do in some of the split code.
+     */
+
+    promote = rSibling->keys[0].key;
+
+    /* fix rSibling. */
+    key_t *start = &(rSibling->keys[1]);
+    block_t *end = rSibling + 1; /* points immediately after block's end. */
+    size_t len = (size_t)end - (size_t)start;
+    memcpy(&(rSibling->keys[0]), start, len);
+    rSibling->used--;
+
+    /*
+     * The pointer to the right sibling will sit immediately to the right of
+     * the key we need to demote into block "me."
+     */
+
+    /* Because we are rotating left, the rightSibling could be beyond the keys,
+     * and it will never be the 0th key. :D  It could be the pointer to the
+     * right of the 0th key, which is held within the 1st key. :D  So, we're
+     * good.
+     */
+    for (i = 0; i <= NUM_KEYS; i++) {
+        if (parent->keys[i].ptr == rSibling) {
+            demote.key = parent->keys[i-1].key;
+            demote.ptr = NULL;
+            parent->keys[i-1].key = promote;
+            break;
+        }
+    }
+
+    /* insert it into the suddenly empty leaf node. */
+    blockInsert(me, &demote, NULL);
+
+    return;
+}
+
 static void deleteLeaf(block_t *where, key_t *curr)
 {
     block_t *lSibling, *rSibling;
@@ -607,6 +663,7 @@ static void deleteLeaf(block_t *where, key_t *curr)
          */
 
         /* rotate left. */
+        return rotateLeft(rSibling, where);
 
         /* pull first key from the sibling, make it the parent key that points
          * back down to me, and insert into me, the parent key.
@@ -837,6 +894,29 @@ static void depthFirstFree(block_t *blk)
     free(blk);
 }
 
+static int test_verifyBlock(int block, int *values, int count)
+{
+    int i, ret;
+    block_t *blk = blockStorage[block];
+    if (blk->used != count) {
+        ret = 0;
+        goto check;
+    }
+    for (i = 0; i < blk->used; i++) {
+        if (blk->keys[i].key != values[i]) {
+            ret = 0;
+            goto check;
+        }
+    }
+
+    /* it matched keys.  we don't need to deliberately check pointers yet. */
+    ret = 1;
+
+check:
+    assert(ret == 1);
+    return ret;
+}
+
 static void test_insertBalance(void)
 {
     int i;
@@ -868,7 +948,84 @@ static void test_insertBalance(void)
     return;
 }
 
-static void test_deleteSimple(void)
+/*
+ * This is leaf case: boring.
+ *
+ *     |2|             |2|
+ *    /   \      =>   /   \
+ *   |1|  |3|4|      |1|  |4|
+ *
+ * Deleting 3.  The node isn't left empty, so meh.
+ *
+ * To create this, we did insert: 1-4
+ */
+static void test_deleteLeafFirstSimple(void)
+{
+    int i;
+    int input[] = {1, 2, 3, 4};
+    block_t *f;
+    block_t *root = NULL;
+
+    printf("testing delete leaf basic\n");
+
+    root = newBlock();
+    assert(NULL != root);
+
+    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+        insert(root, input[i]);
+    }
+
+    printf("\nfully-built:\n\n");
+    depthFirstPrint(root);
+
+    /* verify we can find all nodes entered in. */
+    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+        f = search(root, input[i]);
+        assert(NULL != f);
+    }
+
+    delete(root, 3);
+
+    printf("\npost-delete:\n\n");
+    depthFirstPrint(root);
+
+    // test it!
+    {
+        for (i = 0; i < NUM_ELEMENTS(input); i++) {
+            f = search(root, input[i]);
+            if (input[i] == 3) {
+                assert(NULL == f);
+            } else {
+                assert(NULL != f);
+            }
+        }
+
+        int zero[] = {2};
+        int first[] = {1};
+        int second[] = {4};
+
+        test_verifyBlock(0, zero, NUM_ELEMENTS(zero));
+        test_verifyBlock(1, first, NUM_ELEMENTS(first));
+        test_verifyBlock(2, second, NUM_ELEMENTS(second));
+    }
+
+    depthFirstFree(root);
+
+    return;
+}
+
+/*
+ * This is leaf case: boring.
+ *
+ *     |2|             |2|
+ *    /   \      =>   /   \
+ *   |1|  |3|4|      |1|  |3|
+ *
+ * Deleting 4.  The node isn't left empty, so meh.
+ *
+ * To create this, we did insert: 1-4
+ */
+static void test_deleteLeafEndSimple(void)
 {
     int i;
     int first = 1;
@@ -907,6 +1064,81 @@ static void test_deleteSimple(void)
 
     printf("\npost-delete:\n\n");
     depthFirstPrint(root);
+
+    depthFirstFree(root);
+
+    return;
+}
+
+/*
+ * This is leaf delete case 2.
+ *
+ *      |4|                     |4|
+ *    /      \                /      \
+ *   |2|     |6|       =>    |2|     |7|
+ *  /  \    /   \           /  \    /   \
+ * |1| |3| |5|  |7|8|      |1| |3| |6|  |8|
+ *
+ * Deleting 5, we rotate left because the right sibling has sufficient keys.
+ *
+ * To create this, we did insert: 1-8.
+ */
+static void test_deleteCase2(void)
+{
+    int i;
+    int input[] = {1, 2, 3, 4, 5, 6, 7, 8};
+    block_t *f;
+    block_t *root = NULL;
+
+    printf("testing delete leaf case 2\n");
+
+    root = newBlock();
+    assert(NULL != root);
+
+    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+        insert(root, input[i]);
+    }
+
+    printf("\nfully-built:\n\n");
+    depthFirstPrint(root);
+
+    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+        f = search(root, input[i]);
+        assert(NULL != f);
+    }
+
+    delete(root, 5);
+
+    printf("\npost-delete:\n\n");
+    depthFirstPrint(root);
+
+    // test it!
+    {
+        for (i = 0; i < NUM_ELEMENTS(input); i++) {
+            f = search(root, input[i]);
+            if (input[i] == 5) {
+                assert(NULL == f);
+            } else {
+                assert(NULL != f);
+            }
+        }
+
+        int zero[] = {4};
+        int one[] = {1};
+        int two[] = {3};
+        int three[] = {6};
+        int four[] = {8};
+        int five[] = {2};
+        int six[] = {7};
+
+        test_verifyBlock(0, zero, NUM_ELEMENTS(zero));
+        test_verifyBlock(1, one, NUM_ELEMENTS(one));
+        test_verifyBlock(2, two, NUM_ELEMENTS(two));
+        test_verifyBlock(3, three, NUM_ELEMENTS(three));
+        test_verifyBlock(4, four, NUM_ELEMENTS(four));
+        test_verifyBlock(5, five, NUM_ELEMENTS(five));
+        test_verifyBlock(6, six, NUM_ELEMENTS(six));
+    }
 
     depthFirstFree(root);
 
@@ -1196,10 +1428,13 @@ int main(void)
 
     test_ptr_t tests[] = {
             test_insertBalance,
+            test_deleteLeafEndSimple,
+            test_deleteLeafFirstSimple,
             test_deleteCase3,
             test_deleteCase6,
             test_deleteCase7,
             test_deleteCase8,
+            test_deleteCase2,
     };
 
     for (i = 0; i < NUM_ELEMENTS(tests); i++) {
