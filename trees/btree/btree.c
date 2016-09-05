@@ -91,23 +91,29 @@ static block_t *newBlock(void);
 /*
  * Append a key into a block's list, always append, newblk can be NULL.
  */
-static void blockInsert(block_t *insert, key_t *promoted, block_t *newblk);
+static void blockAppend(block_t *insert, key_t *promoted, block_t *newblk);
 /* split a normal block. */
 static void blockSplit(block_t *blk);
 /* split the root block */
 static void rootSplit(block_t *root);
 /* insert the value into the tree starting at the specified block. */
 static void insert(block_t *root, int value);
-/* print one block. */
+/*
+ * insert the value into the leaf
+ * (could just call insert and specify leaf as root).
+ */
+static void insertLeaf(block_t *leaf, int value);
 
 static block_t *findLeftSibling(block_t *me);
 static void rotateRight(block_t *lSibling, block_t *me);
 static block_t *findRightSibling(block_t *me);
 static void rotateLeft(block_t *rSibling, block_t *me);
+static void demoteParent(block_t *me);
 
 static void deleteLeaf(block_t *where, key_t *curr);
 static void delete(block_t *root, int value);
 
+/* print one block. */
 static void blockPrint(block_t *blk);
 /* print each block in a dfs pattern. */
 static void depthFirstPrint(block_t *blk);
@@ -178,10 +184,10 @@ static block_t *search(block_t *blk, int value)
     return where;
 }
 
-static void blockInsert(block_t *insert, key_t *promoted, block_t *newblk)
+static void blockAppend(block_t *insert, key_t *promoted, block_t *newblk)
 {
     if (newblk) {
-        SPLIT_DPRINTF("blockInsert to blk: %d, key: %d, newblk: %d\n",
+        SPLIT_DPRINTF("blockAppend to blk: %d, key: %d, newblk: %d\n",
                 insert->id,
                 promoted->key,
                 newblk->id);
@@ -270,7 +276,7 @@ static void blockSplit(block_t *blk)
     }
 #endif
 
-    return blockInsert(blk->parent, &promote, newRight);
+    return blockAppend(blk->parent, &promote, newRight);
 }
 
 /*
@@ -419,7 +425,7 @@ static void rotateRight(block_t *lSibling, block_t *me)
     }
 
     /* insert it into the suddenly empty leaf node. */
-    blockInsert(me, &demote, NULL);
+    blockAppend(me, &demote, NULL);
 
     return;
 }
@@ -487,7 +493,50 @@ static void rotateLeft(block_t *rSibling, block_t *me)
     }
 
     /* insert it into the suddenly empty leaf node. */
-    blockInsert(me, &demote, NULL);
+    blockAppend(me, &demote, NULL);
+
+    return;
+}
+
+static void demoteParent(block_t *me)
+{
+    int i;
+
+    /* the following are just ya know, if we get here and these fail it's a
+     * serious non-recoverable issue.
+     */
+    assert(me->parent);
+    assert(me->parent->used > 1);
+
+    block_t *parent = me->parent;
+
+    /*
+     * Find whomever points to me, may be left or right pointer, and demote
+     * them into the corresponding neighbor block.
+     */
+    for (i = 0; i <= NUM_KEYS; i++) {
+        if (parent->keys[i].ptr == me) {
+            if (i == 0) {
+                insertLeaf(parent->keys[i+1].ptr, parent->keys[i].key);
+
+                block_t *end = parent + 1;
+                size_t len = (size_t)end - (size_t)&(parent->keys[i+1]);
+                memcpy(&(parent->keys[0]), &(parent->keys[i+1]), len);
+            } else {
+                insertLeaf(parent->keys[i-1].ptr, parent->keys[i-1].key);
+                parent->keys[i].ptr = parent->keys[i-1].ptr;
+
+                /* now move it to the left. */
+                block_t *end = parent + 1;
+                size_t len = (size_t)end - (size_t)&(parent->keys[i]);
+                memcpy(&(parent->keys[i-1]), &(parent->keys[i]), len);
+            }
+
+            break;
+        }
+    }
+
+    parent->used--;
 
     return;
 }
@@ -588,7 +637,7 @@ static void deleteLeaf(block_t *where, key_t *curr)
      *
      * + more complex; detailed later.
      * ++ push neighbor down, free block, three variations for immediate
-     * siblings.
+     * siblings (4a, 4b,4c).
      *
      * From this table I was able to readily see that the parent's sufficiency
      * isn't the lynchpin, it's the siblings.
@@ -603,7 +652,8 @@ static void deleteLeaf(block_t *where, key_t *curr)
      * Determine if immediate siblings are sufficient.
      *
      * XXX: make generic and check all siblings and roll them when necessary to
-     * then re-check immediate siblings.
+     * then re-check immediate siblings. (case 9), which collapses into one of
+     * the 8.
      */
 
     /*
@@ -618,12 +668,43 @@ static void deleteLeaf(block_t *where, key_t *curr)
             lSibling,
             rSibling);
 
+
+    if (lSibling && !rSibling && lSibling->used == 1) {
+        /* you only have a left sibling and it's insufficient. */
+        if (where->parent->used > 1) {
+            fprintf(stderr, "case 4\n");
+            demoteParent(where);
+            free(where);
+        } else {
+            fprintf(stderr, "case 1\n");
+        }
+
+        return;
+    }
+    if (rSibling && !lSibling && rSibling->used == 1) {
+        /* you only have a right sibling and it's insufficient. */
+        if (where->parent->used > 1) {
+            fprintf(stderr, "case 4\n");
+            demoteParent(where);
+            free(where);
+        } else {
+            fprintf(stderr, "case 1\n");
+        }
+
+        return;
+    }
+
     /* both siblings are valid, but insufficient */
     if ((lSibling && lSibling->used == 1) &&
         (rSibling && rSibling->used == 1)) {
 
-        fprintf(stderr,
-                "left sibling and right sibling are insufficient (case 1 or 4)\n");
+        if (where->parent->used > 1) {
+            demoteParent(where);
+            free(where);
+        } else {
+            fprintf(stderr, "parent is insufficient (case 1)\n");
+        }
+
         return;
     }
 
@@ -635,11 +716,6 @@ static void deleteLeaf(block_t *where, key_t *curr)
 
         /* rotate right. */
         return rotateRight(lSibling, where);
-
-        /* pull last key from left sibling, make it the parent key that points
-         * back down to me, and insert into me, the parent key.
-         */
-
     } else {
         /*
          * If no left sibling, or left sibling not valid, the right sibling
@@ -648,10 +724,6 @@ static void deleteLeaf(block_t *where, key_t *curr)
 
         /* rotate left. */
         return rotateLeft(rSibling, where);
-
-        /* pull first key from the sibling, make it the parent key that points
-         * back down to me, and insert into me, the parent key.
-         */
     }
 
     return;
@@ -689,6 +761,42 @@ static void delete(block_t *root, int value)
         /* 3b. Handle parent deletion. */
         fprintf(stderr, "this node has children!\n");
         //deleteInternal();
+    }
+}
+
+static void insertLeaf(block_t *leaf, int value)
+{
+    int i;
+    key_t *curr;
+
+    /*
+     * This is identical to code inside insert, so that can just call this;
+     * once I have fuller regression testing in place.
+     */
+    for (i = 0; i < leaf->used; i++) {
+        curr = &(leaf->keys[i]);
+
+        if (value < curr->key) {
+            /* it goes here. */
+            /* we need to shift everything to the right by one. */
+
+            /* point immediately after the last memory slot. */
+            key_t *end = &(leaf->keys[leaf->used]);
+            size_t len = (size_t)end - (size_t)curr;
+
+            (void)memmove(curr + 1, curr, len);
+            curr->key = value;
+            leaf->used++;
+            break;
+        } else {
+            /* we're greater */
+            if (i == (leaf->used-1)) {
+                /* we're at the last slot in use; so we can just set after. */
+                leaf->keys[leaf->used].key = value;
+                leaf->used++;
+                break;
+            }
+        }
     }
 }
 
@@ -1323,6 +1431,8 @@ static void test_deleteCase6(void)
         insert(root, input[i]);
     }
 
+    fprintf(stderr, "fully built\n");
+
     for (i = 0; i < NUM_ELEMENTS(input); i++) {
         f = search(root, input[i]);
         assert(NULL != f);
@@ -1436,87 +1546,190 @@ static void test_deleteCase8(void)
 }
 
 /*
+ * This is leaf delete case 4a.
+ *
  * In this case, the parent has more than one key, but all of the siblings have
  * one key each.
  *
- * For internal reference, this is case 4.
- *
- *      |4|
- *   /       \
- *  |2|      |6|8|
- *  /  \    /  \  \
- * |1| |3| |5| |7| |9|
- *
- * Gotta love the attempt as ascii tree art. :D
+ *      |4|                       |4|
+ *    /       \                 /     \
+ *   |2|      |6|8|      =>    |2|     |6|
+ *  /  \     /  \  \          /  \    /  \
+ * |1| |3| |5| |7| |9|       |1| |3| |5| |7|8|
  *
  * In this case, what happens when 9 is deleted?
  *
- * 1. Delete 9, see the block is empty so we check the conditions:
- *  - Is the parent sufficient to be demoted?
- *  - Are the siblings sufficient to be promoted?
- *
- * Being this is the first of my non-super-trivial implementation tests (yay
- * making time for TDD), I will be more thorough in explanation (I presume).
- *
- * However, this implementation really is _only_ for me.  It _is_ open source,
- * and I'd be happy if anyone else found value from this, if nothing else, as
- * a different walkthrough of the data structure than you might find elsewhere.
- *
- * XXX: Although by implementing these tests, they really aren't sufficient to
- * verify the code, beyond, the links between the blocks are properly
- * maintained; unless I implement a nice method to verify each block... which I
- * could do, and would definitely benefit from if this were more than just for
- * fun.
+ * To create this, we did insert: 1-9
  */
-#if 0
-static void test_deleteCase4(void)
+static void test_deleteCase4a(void)
 {
     int i;
-    int first = 1;
-    int count = 9;
+    int input[] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
     block_t *f;
     block_t *root = NULL;
 
-    counter = 0; /* to make it easier on humans. */
+    printf("testing delete leaf case 4a\n");
 
     root = newBlock();
     assert(NULL != root);
 
-    for (i = first; i < (first + count); i++) {
-        insert(root, i);
-        //depthFirstPrint(root);
+    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+        insert(root, input[i]);
     }
 
-    printf("\n\n");
+    printf("\nfully-built:\n\n");
     depthFirstPrint(root);
 
-    /* verify we can find all nodes entered in. */
-    for (i = first; i < (first + count); i++) {
-        f = search(root, i);
+    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+        f = search(root, input[i]);
         assert(NULL != f);
     }
 
-    //delete(root, 4);
+    delete(root, 9);
 
-#if 0
-    for (i = first; i < (first + count); i++) {
-        f = search(root, i);
-        if (i == count) {
-            assert(NULL == f);
-        } else {
-            assert(NULL != f);
+    printf("\npost-delete:\n\n");
+    depthFirstPrint(root);
+
+    // test it!
+    {
+        for (i = 0; i < NUM_ELEMENTS(input); i++) {
+            f = search(root, input[i]);
+            if (input[i] == 9) {
+                assert(NULL == f);
+            } else {
+                assert(NULL != f);
+            }
         }
     }
-#endif
-
-    printf("\n\n");
-    depthFirstPrint(root);
 
     depthFirstFree(root);
 
     return;
 }
-#endif
+
+/*
+ * This is leaf delete case 4b.
+ *
+ * In this case, the parent has more than one key, but all of the siblings have
+ * one key each.
+ *
+ *      |4|                       |4|
+ *    /       \                 /     \
+ *   |2|      |6|8|      =>    |2|     |8|
+ *  /  \     /  \  \          /  \    /   \
+ * |1| |3| |5| |7| |9|       |1| |3| |5|6| |9|
+ *
+ * In this case, what happens when 7 is deleted?
+ *
+ * To create this, we did insert: 1-9
+ */
+static void test_deleteCase4b(void)
+{
+    int i;
+    int input[] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
+    block_t *f;
+    block_t *root = NULL;
+
+    printf("testing delete leaf case 4b\n");
+
+    root = newBlock();
+    assert(NULL != root);
+
+    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+        insert(root, input[i]);
+    }
+
+    printf("\nfully-built:\n\n");
+    depthFirstPrint(root);
+
+    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+        f = search(root, input[i]);
+        assert(NULL != f);
+    }
+
+    delete(root, 7);
+
+    printf("\npost-delete:\n\n");
+    depthFirstPrint(root);
+
+    // test it!
+    {
+        for (i = 0; i < NUM_ELEMENTS(input); i++) {
+            f = search(root, input[i]);
+            if (input[i] == 7) {
+                assert(NULL == f);
+            } else {
+                assert(NULL != f);
+            }
+        }
+    }
+
+    depthFirstFree(root);
+
+    return;
+}
+
+/*
+ * This is leaf delete case 4c.
+ *
+ * In this case, the parent has more than one key, but all of the siblings have
+ * one key each.
+ *
+ *      |4|                       |4|
+ *    /       \                 /     \
+ *   |2|      |6|8|      =>    |2|     |8|
+ *  /  \     /  \  \          /  \    /   \
+ * |1| |3| |5| |7| |9|       |1| |3| |6|7| |9|
+ *
+ * In this case, what happens when 5 is deleted?
+ *
+ * To create this, we did insert: 1-9
+ */
+static void test_deleteCase4c(void)
+{
+    int i;
+    int input[] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
+    block_t *f;
+    block_t *root = NULL;
+
+    printf("testing delete leaf case 4c\n");
+
+    root = newBlock();
+    assert(NULL != root);
+
+    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+        insert(root, input[i]);
+    }
+
+    printf("\nfully-built:\n\n");
+    depthFirstPrint(root);
+
+    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+        f = search(root, input[i]);
+        assert(NULL != f);
+    }
+
+    delete(root, 5);
+
+    printf("\npost-delete:\n\n");
+    depthFirstPrint(root);
+
+    // test it!
+    {
+        for (i = 0; i < NUM_ELEMENTS(input); i++) {
+            f = search(root, input[i]);
+            if (input[i] == 5) {
+                assert(NULL == f);
+            } else {
+                assert(NULL != f);
+            }
+        }
+    }
+
+    depthFirstFree(root);
+
+    return;
+}
 
 int main(void)
 {
@@ -1539,6 +1752,9 @@ int main(void)
             test_deleteCase2,
             test_deleteCase5a,
             test_deleteCase5b,
+            test_deleteCase4a,
+            test_deleteCase4b,
+            test_deleteCase4c,
     };
 
     for (i = 0; i < NUM_ELEMENTS(tests); i++) {
