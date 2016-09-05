@@ -602,12 +602,6 @@ static void deleteLeaf(block_t *where, key_t *curr)
      */
 
     /*
-     * XXX: This code only checks immediate siblings for rotation, whereas
-     * really; to be generic, it could roll siblings along if any sibling has
-     * > 1 key in it.
-     */
-
-    /*
      * suff. == sufficient
      * rot. == rotate
      * -> == right
@@ -649,16 +643,16 @@ static void deleteLeaf(block_t *where, key_t *curr)
      * the same balanced tree.
      */
 
+    /* Determine if immediate siblings are sufficient. */
+
     /*
-     * Determine if immediate siblings are sufficient.
-     *
-     * XXX: make generic and check all siblings and roll them when necessary to
-     * then re-check immediate siblings. (case 9), which collapses into one of
-     * the 8.
+     * XXX: This code only checks immediate siblings for rotation, whereas
+     * really; to be generic, it could roll siblings along if any sibling has
+     * > 1 key in it.
      */
 
     /*
-     * find siblings, you seriously will have at least one, we know that by the
+     * Find siblings, you seriously will have at least one, we know that by the
      * balanced tree properties.
      */
     lSibling = findLeftSibling(where);
@@ -670,10 +664,10 @@ static void deleteLeaf(block_t *where, key_t *curr)
             rSibling);
 
 
+    /* You only have a left sibling and it's insufficient. */
     if (lSibling && !rSibling && lSibling->used == 1) {
-        /* you only have a left sibling and it's insufficient. */
         if (where->parent->used > 1) {
-            fprintf(stderr, "case 4\n");
+            /* Case 4 */
             demoteParent(where);
             free(where);
         } else {
@@ -682,10 +676,12 @@ static void deleteLeaf(block_t *where, key_t *curr)
 
         return;
     }
+
+    /* You only have a right sibling and it's insufficient. */
     if (rSibling && !lSibling && rSibling->used == 1) {
-        /* you only have a right sibling and it's insufficient. */
+
         if (where->parent->used > 1) {
-            fprintf(stderr, "case 4\n");
+            /* Case 4 */
             demoteParent(where);
             free(where);
         } else {
@@ -695,15 +691,23 @@ static void deleteLeaf(block_t *where, key_t *curr)
         return;
     }
 
-    /* both siblings are valid, but insufficient */
+    /* Both siblings are valid, but insufficient */
     if ((lSibling && lSibling->used == 1) &&
         (rSibling && rSibling->used == 1)) {
 
         if (where->parent->used > 1) {
+            /* Case 4 */
             demoteParent(where);
             free(where);
         } else {
             fprintf(stderr, "parent is insufficient (case 1)\n");
+            /*
+             * I don't think this can ever happen, because if you have a left
+             * and right sibling than the parent block has at least 2 keys.
+             *
+             * However, the case where each of your siblings has only one key
+             * each, can certainly happen.
+             */
         }
 
         return;
