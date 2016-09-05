@@ -577,6 +577,7 @@ static void deleteLeaf(block_t *where, key_t *curr)
     /* if this is root. */
     if (!where->parent) {
         fprintf(stderr, "root node is empty!\n");
+        assert(0);
         return;
     }
 
