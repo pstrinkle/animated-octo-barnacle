@@ -557,9 +557,66 @@ static void demoteParent(block_t *me)
     }
 
     /* Ok, now the parent block is empty! */
+    block_t *carry = parent->keys[0].ptr;
+
     fprintf(stderr, "\n\nparent is empty\n");
+    blockPrint(parent);
     fprintf(stderr, "don't abandon: \n");
-    blockPrint(parent->keys[0].ptr);
+    blockPrint(carry);
+
+    block_t *lSib = findLeftSibling(parent);
+    block_t *rSib = findRightSibling(parent);
+
+    fprintf(stderr, "left sib: 0x%x, right sib: 0x%x\n", lSib, rSib);
+
+    /*
+     * XXX: Could use blockAppend() to do the pushdown, and then manually prune
+     * however, that would then need to check again, and i'd need to loop,
+     * whereas if I do this properly, I can do it recursively via demoteParent.
+     *
+     * However... if I see that siblings are insufficient but parent is, then
+     * I know the re-balance here will fix it.  If the parent and siblings are
+     * insufficient, then there is more work.
+     *
+     * So, I could do a shortcut here and just do a single fix-up since it
+     * probably is the common case.
+     *
+     * This will probably work well as a stop-case, to stop the recursion a
+     * base case.
+     */
+
+    /* You only have a left sibling and it's insufficient. */
+    if (lSib && !rSib && lSib->used == 1) {
+        fprintf(stderr, "lSib insufficient (no rSib)\n");
+        blockPrint(lSib);
+        assert(0);
+    }
+
+    /* You only have a right sibling and it's insufficient. */
+    if (rSib && !lSib && rSib->used == 1) {
+        fprintf(stderr, "rSib insufficient (no lSib)\n");
+        blockPrint(rSib);
+        assert(0);
+    }
+
+    /* Both siblings are valid, but insufficient */
+    if ((lSib && lSib->used == 1) && (rSib && rSib->used == 1)) {
+        fprintf(stderr, "both valid, insufficient\n");
+        blockPrint(lSib);
+        blockPrint(rSib);
+        assert(0);
+    }
+
+    if (lSib && lSib->used > 1) {
+        fprintf(stderr, "lSib is sufficient, so probably rotate\n");
+        blockPrint(lSib);
+        assert(0);
+    } else {
+        fprintf(stderr, "rSib is sufficient, so probably rotate\n");
+        blockPrint(rSib);
+        assert(0);
+    }
+
     assert(0);
 
     return;
@@ -654,6 +711,7 @@ static void deleteLeaf(block_t *where, key_t *curr)
      * -----------------------------------------------
      * | 8    | Y      | Y       | Y       | rot. -> |
      * -----------------------------------------------
+     * | 9 ... (not yet documented, will document when I handle it)
      *
      * + more complex; detailed later.
      * ++ push neighbor down, free block, three variations for immediate
@@ -684,6 +742,11 @@ static void deleteLeaf(block_t *where, key_t *curr)
     rSib = findRightSibling(where);
 
     fprintf(stderr, "left sib: 0x%x, right sib: 0x%x\n", lSib, rSib);
+
+    /*
+     * This code is going to be effectively in two places, which means maybe
+     * I can balance it more nicely; I'll refactor later.
+     */
 
     /* You only have a left sibling and it's insufficient. */
     if (lSib && !rSib && lSib->used == 1) {
@@ -1737,7 +1800,7 @@ static void test_deleteCase8(void)
 
 
 /*
- * This is leaf delete case 10.
+ * This is leaf delete case 10a.
  *
  *       |4|8|                           |4|
  *     /    \      \                   /     \
@@ -1752,7 +1815,7 @@ static void test_deleteCase8(void)
  *
  * To create this, we did insert: 1-11
  */
-static void test_deleteCase10(void)
+static void test_deleteCase10a(void)
 {
     int input[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
     block_t *root = NULL;
@@ -1802,7 +1865,7 @@ int main(void)
             test_deleteCase6,
             test_deleteCase7,
             test_deleteCase8,
-            test_deleteCase10,
+            test_deleteCase10a,
     };
 
     for (i = 0; i < NUM_ELEMENTS(tests); i++) {
