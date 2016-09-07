@@ -29,27 +29,27 @@
 
 #define INSERT_DEBUG 0
 #define SPLIT_DEBUG 0
+#define MERGE_DEBUG 1
+
+#if MERGE_DEBUG
+#define MERGE_DPRINTF(...) \
+    do { fprintf(stderr, __VA_ARGS__); } while (0)
+#else
+#define MERGE_DPRINTF(...) do { } while (0)
+#endif
 
 #if INSERT_DEBUG
 #define INSERT_DPRINTF(...) \
-    do { \
-        fprintf(stderr, __VA_ARGS__); \
-    } while (0)
+    do { fprintf(stderr, __VA_ARGS__); } while (0)
 #else
-#define INSERT_DPRINTF(...) \
-    do { \
-    } while (0)
+#define INSERT_DPRINTF(...) do { } while (0)
 #endif
 
 #if SPLIT_DEBUG
 #define SPLIT_DPRINTF(...) \
-    do { \
-        fprintf(stderr, __VA_ARGS__); \
-    } while (0)
+    do { fprintf(stderr, __VA_ARGS__); } while (0)
 #else
-#define SPLIT_DPRINTF(...) \
-    do { \
-    } while (0)
+#define SPLIT_DPRINTF(...) do { } while (0)
 #endif
 
 #define VERIFY_BLOCK(ID, VALUES) \
@@ -122,7 +122,7 @@ static block_t *findLeftSibling(block_t *me);
 static void rotateRight(block_t *lSibling, block_t *me);
 static block_t *findRightSibling(block_t *me);
 static void rotateLeft(block_t *rSibling, block_t *me);
-static void demoteParent(block_t *me);
+static void demoteParent(block_t *me, block_t *sub);
 
 static void deleteLeaf(block_t *where, key_t *curr);
 static void delete(block_t *root, int value);
@@ -513,7 +513,7 @@ static void rotateLeft(block_t *rSibling, block_t *me)
     return;
 }
 
-static void demoteParent(block_t *me)
+static void demoteParent(block_t *me, block_t *sub)
 {
     int i;
 
@@ -524,6 +524,33 @@ static void demoteParent(block_t *me)
 
     block_t *parent = me->parent;
 
+    {
+        int subid = -1;
+        if (sub) {
+            subid = sub->id;
+        }
+
+        fprintf(stderr,
+                "demoteParent: me %d, my parent: %d, sub: %d\n",
+                me->id,
+                parent->id,
+                subid);
+
+        fprintf(stderr, "\nme: ");
+        blockPrint(me);
+
+        fprintf(stderr, "\nmy parent: ");
+        blockPrint(parent);
+
+        if (sub) {
+            // XXX: sub will need a new parent once it's attached.
+            fprintf(stderr, "\nmy sub: ");
+            blockPrint(sub);
+
+            fprintf(stderr, "\n-------- bailing while I examine stuff\n");
+        }
+    }
+
     /*
      * Find whomever points to me, may be left or right pointer, and demote
      * them into the corresponding neighbor block.
@@ -531,13 +558,25 @@ static void demoteParent(block_t *me)
     for (i = 0; i <= NUM_KEYS; i++) {
         if (parent->keys[i].ptr == me) {
             if (i == 0) {
-                insertLeaf(parent->keys[i+1].ptr, parent->keys[i].key);
+                if (sub) {
+                    key_t k;
+                    k.key = parent->keys[i].key;
+                    blockAppend(parent->keys[i+1].ptr, &k, sub);
+                } else {
+                    insertLeaf(parent->keys[i+1].ptr, parent->keys[i].key);
+                }
 
                 block_t *end = parent + 1;
                 size_t len = (size_t)end - (size_t)&(parent->keys[i+1]);
                 memcpy(&(parent->keys[0]), &(parent->keys[i+1]), len);
             } else {
-                insertLeaf(parent->keys[i-1].ptr, parent->keys[i-1].key);
+                if (sub) {
+                    key_t k;
+                    k.key = parent->keys[i].key;
+                    blockAppend(parent->keys[i+1].ptr, &k, sub);
+                } else {
+                    insertLeaf(parent->keys[i-1].ptr, parent->keys[i-1].key);
+                }
                 parent->keys[i].ptr = parent->keys[i-1].ptr;
 
                 /* now move it to the left. */
@@ -552,6 +591,11 @@ static void demoteParent(block_t *me)
 
     parent->used--;
 
+    if (sub) {
+        fprintf(stderr, "Ok, so this is ya know, a stopping point.\n");
+        assert(0);
+    }
+
     if (parent->used > 0) {
         return; /* yay, bail. */
     }
@@ -559,9 +603,9 @@ static void demoteParent(block_t *me)
     /* Ok, now the parent block is empty! */
     block_t *carry = parent->keys[0].ptr;
 
-    fprintf(stderr, "\n\nparent is empty\n");
+    fprintf(stderr, "\n\nparent (%d) is empty\n", parent->id);
     blockPrint(parent);
-    fprintf(stderr, "don't abandon: \n");
+    fprintf(stderr, "don't abandon: %d, \n", carry->id);
     blockPrint(carry);
 
     block_t *lSib = findLeftSibling(parent);
@@ -583,38 +627,50 @@ static void demoteParent(block_t *me)
      *
      * This will probably work well as a stop-case, to stop the recursion a
      * base case.
+     *
+     * XXX: How will this fair when the block is the root?  Will it get hit?
+     * I'll need to walk this through at least.
      */
 
     /* You only have a left sibling and it's insufficient. */
     if (lSib && !rSib && lSib->used == 1) {
-        fprintf(stderr, "lSib insufficient (no rSib)\n");
+        fprintf(stderr, "lSib insufficient (no rSib):\n");
         blockPrint(lSib);
+
+        demoteParent(parent, carry);
+        free(parent);
         assert(0);
     }
 
     /* You only have a right sibling and it's insufficient. */
     if (rSib && !lSib && rSib->used == 1) {
-        fprintf(stderr, "rSib insufficient (no lSib)\n");
+        fprintf(stderr, "rSib insufficient (no lSib):\n");
         blockPrint(rSib);
+
+        demoteParent(parent, carry);
+        free(parent);
         assert(0);
     }
 
     /* Both siblings are valid, but insufficient */
     if ((lSib && lSib->used == 1) && (rSib && rSib->used == 1)) {
-        fprintf(stderr, "both valid, insufficient\n");
+        fprintf(stderr, "both valid, insufficient:\n");
         blockPrint(lSib);
         blockPrint(rSib);
+
+        demoteParent(parent, carry);
+        free(parent);
         assert(0);
     }
 
     if (lSib && lSib->used > 1) {
-        fprintf(stderr, "lSib is sufficient, so probably rotate\n");
+        fprintf(stderr, "lSib is sufficient, so probably rotate:\n");
         blockPrint(lSib);
-        assert(0);
+
     } else {
-        fprintf(stderr, "rSib is sufficient, so probably rotate\n");
+        fprintf(stderr, "rSib is sufficient, so probably rotate:\n");
         blockPrint(rSib);
-        assert(0);
+
     }
 
     assert(0);
@@ -750,21 +806,21 @@ static void deleteLeaf(block_t *where, key_t *curr)
 
     /* You only have a left sibling and it's insufficient. */
     if (lSib && !rSib && lSib->used == 1) {
-        demoteParent(where);
+        demoteParent(where, NULL);
         free(where);
         return;
     }
 
     /* You only have a right sibling and it's insufficient. */
     if (rSib && !lSib && rSib->used == 1) {
-        demoteParent(where);
+        demoteParent(where, NULL);
         free(where);
         return;
     }
 
     /* Both siblings are valid, but insufficient */
     if ((lSib && lSib->used == 1) && (rSib && rSib->used == 1)) {
-        demoteParent(where);
+        demoteParent(where, NULL);
         free(where);
         return;
     }
