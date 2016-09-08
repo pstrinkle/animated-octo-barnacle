@@ -55,6 +55,12 @@
 #define VERIFY_BLOCK(ID, VALUES) \
     test_verifyBlock((ID), (VALUES), NUM_ELEMENTS((VALUES)))
 
+#define VERIFY_BLOCK2(ID, ...) \
+    do { \
+        int X[] = {__VA_ARGS__}; \
+        test_verifyBlock((ID), X, NUM_ELEMENTS(X)); \
+    } while (0)
+
 #define VERIFY_DELETE(ROOT, INPUT, X) \
     test_verifyDeletion((ROOT), (INPUT), NUM_ELEMENTS((INPUT)), (X));
 
@@ -209,6 +215,10 @@ static void blockAppend(block_t *insert, key_t *promoted, block_t *newblk)
     }
 
     insert->keys[insert->used].key = promoted->key; /* i think this is good.. */
+
+    if (newblk) {
+        newblk->parent = insert;
+    }
 
     insert->keys[insert->used+1].ptr = newblk;
     insert->used++;
@@ -517,12 +527,19 @@ static void demoteParent(block_t *me, block_t *sub)
 {
     int i;
 
-    /* the following are just ya know, if we get here and these fail it's a
+    /*
+     * The following are just ya know, if we get here and these fail it's a
      * serious non-recoverable issue.
+     */
+
+    /*
+     * XXX: If we get here and me is root, and it's empty, could we have gotten
+     * here?
      */
     assert(me->parent);
 
     block_t *parent = me->parent;
+    block_t *pushedHere = NULL;
 
     {
         int subid = -1;
@@ -530,25 +547,25 @@ static void demoteParent(block_t *me, block_t *sub)
             subid = sub->id;
         }
 
-        fprintf(stderr,
+#if MERGE_DEBUG
+        MERGE_DPRINTF(
                 "demoteParent: me %d, my parent: %d, sub: %d\n",
                 me->id,
                 parent->id,
                 subid);
 
-        fprintf(stderr, "\nme: ");
+        MERGE_DPRINTF("\nme: ");
         blockPrint(me);
 
-        fprintf(stderr, "\nmy parent: ");
+        MERGE_DPRINTF("my parent: ");
         blockPrint(parent);
 
         if (sub) {
             // XXX: sub will need a new parent once it's attached.
-            fprintf(stderr, "\nmy sub: ");
+            MERGE_DPRINTF("my sub: ");
             blockPrint(sub);
-
-            fprintf(stderr, "\n-------- bailing while I examine stuff\n");
         }
+#endif
     }
 
     /*
@@ -558,9 +575,12 @@ static void demoteParent(block_t *me, block_t *sub)
     for (i = 0; i <= NUM_KEYS; i++) {
         if (parent->keys[i].ptr == me) {
             if (i == 0) {
+                pushedHere = parent->keys[i+1].ptr;
+
                 if (sub) {
                     key_t k;
                     k.key = parent->keys[i].key;
+
                     blockAppend(parent->keys[i+1].ptr, &k, sub);
                 } else {
                     insertLeaf(parent->keys[i+1].ptr, parent->keys[i].key);
@@ -570,13 +590,23 @@ static void demoteParent(block_t *me, block_t *sub)
                 size_t len = (size_t)end - (size_t)&(parent->keys[i+1]);
                 memcpy(&(parent->keys[0]), &(parent->keys[i+1]), len);
             } else {
+                pushedHere = parent->keys[i-1].ptr;
+
                 if (sub) {
                     key_t k;
-                    k.key = parent->keys[i].key;
-                    blockAppend(parent->keys[i+1].ptr, &k, sub);
+                    k.key = parent->keys[i-1].key;
+
+                    MERGE_DPRINTF(
+                            "trying to append key: %d, with a pointer to: %d into %d\n",
+                            k.key,
+                            sub->id,
+                            parent->keys[i-1].ptr->id);
+
+                    blockAppend(parent->keys[i-1].ptr, &k, sub);
                 } else {
                     insertLeaf(parent->keys[i-1].ptr, parent->keys[i-1].key);
                 }
+
                 parent->keys[i].ptr = parent->keys[i-1].ptr;
 
                 /* now move it to the left. */
@@ -591,10 +621,10 @@ static void demoteParent(block_t *me, block_t *sub)
 
     parent->used--;
 
-    if (sub) {
-        fprintf(stderr, "Ok, so this is ya know, a stopping point.\n");
-        assert(0);
-    }
+#if MERGE_DEBUG
+    MERGE_DPRINTF("parent demoted here: blk %d\n", pushedHere->id);
+    blockPrint(pushedHere);
+#endif
 
     if (parent->used > 0) {
         return; /* yay, bail. */
@@ -603,15 +633,20 @@ static void demoteParent(block_t *me, block_t *sub)
     /* Ok, now the parent block is empty! */
     block_t *carry = parent->keys[0].ptr;
 
-    fprintf(stderr, "\n\nparent (%d) is empty\n", parent->id);
+    /* just for fun. */
+    memset(&parent->keys[0], 0x00, (NUM_KEYS+1) * sizeof(key_t));
+
+#if MERGE_DEBUG
+    MERGE_DPRINTF("\n\nparent (%d) is empty\n", parent->id);
     blockPrint(parent);
-    fprintf(stderr, "don't abandon: %d, \n", carry->id);
+    MERGE_DPRINTF("don't abandon: %d, \n", carry->id);
     blockPrint(carry);
+#endif
 
     block_t *lSib = findLeftSibling(parent);
     block_t *rSib = findRightSibling(parent);
 
-    fprintf(stderr, "left sib: 0x%x, right sib: 0x%x\n", lSib, rSib);
+    MERGE_DPRINTF("left sib: 0x%x, right sib: 0x%x\n", lSib, rSib);
 
     /*
      * XXX: Could use blockAppend() to do the pushdown, and then manually prune
@@ -634,43 +669,52 @@ static void demoteParent(block_t *me, block_t *sub)
 
     /* You only have a left sibling and it's insufficient. */
     if (lSib && !rSib && lSib->used == 1) {
-        fprintf(stderr, "lSib insufficient (no rSib):\n");
+#if MERGE_DEBUG
+        MERGE_DPRINTF("lSib insufficient (no rSib):\n");
         blockPrint(lSib);
+#endif
 
         demoteParent(parent, carry);
         free(parent);
-        assert(0);
+        return;
     }
 
     /* You only have a right sibling and it's insufficient. */
     if (rSib && !lSib && rSib->used == 1) {
+#if MERGE_DEBUG
         fprintf(stderr, "rSib insufficient (no lSib):\n");
         blockPrint(rSib);
+#endif
 
         demoteParent(parent, carry);
         free(parent);
-        assert(0);
+        return;
     }
 
     /* Both siblings are valid, but insufficient */
     if ((lSib && lSib->used == 1) && (rSib && rSib->used == 1)) {
+#if MERGE_DEBUG
         fprintf(stderr, "both valid, insufficient:\n");
         blockPrint(lSib);
         blockPrint(rSib);
+#endif
 
         demoteParent(parent, carry);
         free(parent);
-        assert(0);
+        return;
     }
 
     if (lSib && lSib->used > 1) {
+#if MERGE_DEBUG
         fprintf(stderr, "lSib is sufficient, so probably rotate:\n");
         blockPrint(lSib);
+#endif
 
     } else {
+#if MERGE_DEBUG
         fprintf(stderr, "rSib is sufficient, so probably rotate:\n");
         blockPrint(rSib);
-
+#endif
     }
 
     assert(0);
@@ -851,6 +895,8 @@ static void delete(block_t *root, int value)
     int i;
     key_t *curr;
     int leaf = 0;
+
+    MERGE_DPRINTF("deleting: %d\n", value);
 
     /* 1. Find the block. */
     block_t *where = search(root, value);
@@ -1237,13 +1283,9 @@ static void test_deleteLeafFirstSimple(void)
     {
         VERIFY_DELETE(root, input, 3);
 
-        int zero[] = {2};
-        int first[] = {1};
-        int second[] = {4};
-
-        VERIFY_BLOCK(0, zero);
-        VERIFY_BLOCK(1, first);
-        VERIFY_BLOCK(2, second);
+        VERIFY_BLOCK2(0, 2);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 4);
     }
 
     depthFirstFree(root);
@@ -1281,13 +1323,9 @@ static void test_deleteLeafEndSimple(void)
     {
         VERIFY_DELETE(root, input, 4);
 
-        int zero[] = {2};
-        int one[] = {1};
-        int two[] = {3};
-
-        VERIFY_BLOCK(0, zero);
-        VERIFY_BLOCK(1, one);
-        VERIFY_BLOCK(2, two);
+        VERIFY_BLOCK2(0, 2);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
     }
 
     depthFirstFree(root);
@@ -1327,21 +1365,13 @@ static void test_deleteCase2(void)
     {
         VERIFY_DELETE(root, input, 5);
 
-        int zero[] = {4};
-        int one[] = {1};
-        int two[] = {3};
-        int three[] = {6};
-        int four[] = {8};
-        int five[] = {2};
-        int six[] = {7};
-
-        VERIFY_BLOCK(0, zero);
-        VERIFY_BLOCK(1, one);
-        VERIFY_BLOCK(2, two);
-        VERIFY_BLOCK(3, three);
-        VERIFY_BLOCK(4, four);
-        VERIFY_BLOCK(5, five);
-        VERIFY_BLOCK(6, six);
+        VERIFY_BLOCK2(0, 4);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(3, 6);
+        VERIFY_BLOCK2(4, 8);
+        VERIFY_BLOCK2(5, 2);
+        VERIFY_BLOCK2(6, 7);
     }
 
     depthFirstFree(root);
@@ -1381,21 +1411,13 @@ static void test_deleteCase3(void)
     {
         VERIFY_DELETE(root, input, 9);
 
-        int zero[] = {4};
-        int one[] = {1};
-        int two[] = {3};
-        int three[] = {5};
-        int four[] = {8};
-        int five[] = {2};
-        int six[] = {6};
-
-        VERIFY_BLOCK(0, zero);
-        VERIFY_BLOCK(1, one);
-        VERIFY_BLOCK(2, two);
-        VERIFY_BLOCK(3, three);
-        VERIFY_BLOCK(4, four);
-        VERIFY_BLOCK(5, five);
-        VERIFY_BLOCK(6, six);
+        VERIFY_BLOCK2(0, 4);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(3, 5);
+        VERIFY_BLOCK2(4, 8);
+        VERIFY_BLOCK2(5, 2);
+        VERIFY_BLOCK2(6, 6);
     }
 
     depthFirstFree(root);
@@ -1438,21 +1460,13 @@ static void test_deleteCase4a(void)
     {
         VERIFY_DELETE(root, input, 9);
 
-        int zero[] = {4};
-        int one[] = {1};
-        int two[] = {3};
-        int three[] = {5};
-        int four[] = {7, 8};
-        int five[] = {2};
-        int six[] = {6};
-
-        VERIFY_BLOCK(0, zero);
-        VERIFY_BLOCK(1, one);
-        VERIFY_BLOCK(2, two);
-        VERIFY_BLOCK(3, three);
-        VERIFY_BLOCK(4, four);
-        VERIFY_BLOCK(5, five);
-        VERIFY_BLOCK(6, six);
+        VERIFY_BLOCK2(0, 4);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(3, 5);
+        VERIFY_BLOCK2(4, 7, 8);
+        VERIFY_BLOCK2(5, 2);
+        VERIFY_BLOCK2(6, 6);
     }
 
     depthFirstFree(root);
@@ -1495,21 +1509,13 @@ static void test_deleteCase4b(void)
     {
         VERIFY_DELETE(root, input, 7);
 
-        int zero[] = {4};
-        int one[] = {1};
-        int two[] = {3};
-        int three[] = {5, 6};
-        int five[] = {2};
-        int six[] = {8};
-        int seven[] = {9};
-
-        VERIFY_BLOCK(0, zero);
-        VERIFY_BLOCK(1, one);
-        VERIFY_BLOCK(2, two);
-        VERIFY_BLOCK(3, three);
-        VERIFY_BLOCK(5, five);
-        VERIFY_BLOCK(6, six);
-        VERIFY_BLOCK(7, seven);
+        VERIFY_BLOCK2(0, 4);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(3, 5, 6);
+        VERIFY_BLOCK2(5, 2);
+        VERIFY_BLOCK2(6, 8);
+        VERIFY_BLOCK2(7, 9);
     }
 
     depthFirstFree(root);
@@ -1552,21 +1558,13 @@ static void test_deleteCase4c(void)
     {
         VERIFY_DELETE(root, input, 5);
 
-        int zero[] = {4};
-        int one[] = {1};
-        int two[] = {3};
-        int four[] = {6, 7};
-        int five[] = {2};
-        int six[] = {8};
-        int seven[] = {9};
-
-        VERIFY_BLOCK(0, zero);
-        VERIFY_BLOCK(1, one);
-        VERIFY_BLOCK(2, two);
-        VERIFY_BLOCK(4, four);
-        VERIFY_BLOCK(5, five);
-        VERIFY_BLOCK(6, six);
-        VERIFY_BLOCK(7, seven);
+        VERIFY_BLOCK2(0, 4);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(4, 6, 7);
+        VERIFY_BLOCK2(5, 2);
+        VERIFY_BLOCK2(6, 8);
+        VERIFY_BLOCK2(7, 9);
     }
 
     depthFirstFree(root);
@@ -1606,23 +1604,14 @@ static void test_deleteCase5a(void)
     {
         VERIFY_DELETE(root, input, 7);
 
-        int zero[] = {4};
-        int one[] = {1};
-        int two[] = {3};
-        int three[] = {5};
-        int four[] = {8};
-        int five[] = {2};
-        int six[] = {6, 9};
-        int seven[] = {10};
-
-        VERIFY_BLOCK(0, zero);
-        VERIFY_BLOCK(1, one);
-        VERIFY_BLOCK(2, two);
-        VERIFY_BLOCK(3, three);
-        VERIFY_BLOCK(4, four);
-        VERIFY_BLOCK(5, five);
-        VERIFY_BLOCK(6, six);
-        VERIFY_BLOCK(7, seven);
+        VERIFY_BLOCK2(0, 4);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(3, 5);
+        VERIFY_BLOCK2(4, 8);
+        VERIFY_BLOCK2(5, 2);
+        VERIFY_BLOCK2(6, 6, 9);
+        VERIFY_BLOCK2(7, 10);
     }
 
     depthFirstFree(root);
@@ -1662,23 +1651,14 @@ static void test_deleteCase5b(void)
     {
         VERIFY_DELETE(root, input, 5);
 
-        int zero[] = {4};
-        int one[] = {1};
-        int two[] = {3};
-        int three[] = {6};
-        int four[] = {8};
-        int five[] = {2};
-        int six[] = {7, 9};
-        int seven[] = {11};
-
-        VERIFY_BLOCK(0, zero);
-        VERIFY_BLOCK(1, one);
-        VERIFY_BLOCK(2, two);
-        VERIFY_BLOCK(3, three);
-        VERIFY_BLOCK(4, four);
-        VERIFY_BLOCK(5, five);
-        VERIFY_BLOCK(6, six);
-        VERIFY_BLOCK(7, seven);
+        VERIFY_BLOCK2(0, 4);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(3, 6);
+        VERIFY_BLOCK2(4, 8);
+        VERIFY_BLOCK2(5, 2);
+        VERIFY_BLOCK2(6, 7, 9);
+        VERIFY_BLOCK2(7, 11);
     }
 
     depthFirstFree(root);
@@ -1718,23 +1698,14 @@ static void test_deleteCase6(void)
     {
         VERIFY_DELETE(root, input, 10);
 
-        int zero[] = {4};
-        int one[] = {1};
-        int two[] = {3};
-        int three[] = {5};
-        int four[] = {7};
-        int five[] = {2};
-        int six[] = {6, 8};
-        int seven[] = {9};
-
-        VERIFY_BLOCK(0, zero);
-        VERIFY_BLOCK(1, one);
-        VERIFY_BLOCK(2, two);
-        VERIFY_BLOCK(3, three);
-        VERIFY_BLOCK(4, four);
-        VERIFY_BLOCK(5, five);
-        VERIFY_BLOCK(6, six);
-        VERIFY_BLOCK(7, seven);
+        VERIFY_BLOCK2(0, 4);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(3, 5);
+        VERIFY_BLOCK2(4, 7);
+        VERIFY_BLOCK2(5, 2);
+        VERIFY_BLOCK2(6, 6, 8);
+        VERIFY_BLOCK2(7, 9);
     }
 
     depthFirstFree(root);
@@ -1774,23 +1745,14 @@ static void test_deleteCase7(void)
     {
         VERIFY_DELETE(root, input, 20);
 
-        int zero[] = {4};
-        int one[] = {1};
-        int two[] = {3};
-        int three[] = {10};
-        int four[] = {15};
-        int five[] = {2};
-        int six[] = {14, 25};
-        int seven[] = {30};
-
-        VERIFY_BLOCK(0, zero);
-        VERIFY_BLOCK(1, one);
-        VERIFY_BLOCK(2, two);
-        VERIFY_BLOCK(3, three);
-        VERIFY_BLOCK(4, four);
-        VERIFY_BLOCK(5, five);
-        VERIFY_BLOCK(6, six);
-        VERIFY_BLOCK(7, seven);
+        VERIFY_BLOCK2(0, 4);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(3, 10);
+        VERIFY_BLOCK2(4, 15);
+        VERIFY_BLOCK2(5, 2);
+        VERIFY_BLOCK2(6, 14, 25);
+        VERIFY_BLOCK2(7, 30);
     }
 
     depthFirstFree(root);
@@ -1830,30 +1792,20 @@ static void test_deleteCase8(void)
     {
         VERIFY_DELETE(root, input, 20);
 
-        int zero[] = {4};
-        int one[] = {1};
-        int two[] = {3};
-        int three[] = {10};
-        int four[] = {15};
-        int five[] = {2};
-        int six[] = {14, 25};
-        int seven[] = {30, 31};
-
-        VERIFY_BLOCK(0, zero);
-        VERIFY_BLOCK(1, one);
-        VERIFY_BLOCK(2, two);
-        VERIFY_BLOCK(3, three);
-        VERIFY_BLOCK(4, four);
-        VERIFY_BLOCK(5, five);
-        VERIFY_BLOCK(6, six);
-        VERIFY_BLOCK(7, seven);
+        VERIFY_BLOCK2(0, 4);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(3, 10);
+        VERIFY_BLOCK2(4, 15);
+        VERIFY_BLOCK2(5, 2);
+        VERIFY_BLOCK2(6, 14, 25);
+        VERIFY_BLOCK2(7, 30, 31);
     }
 
     depthFirstFree(root);
 
     return;
 }
-
 
 /*
  * This is leaf delete case 10a.
@@ -1876,19 +1828,30 @@ static void test_deleteCase10a(void)
     int input[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
     block_t *root = NULL;
 
-    printf("testing delete leaf case 10\n");
+    printf("testing delete leaf case 10a\n");
 
     root = test_buildTree(root, input, NUM_ELEMENTS(input));
 
     printTree("\nfully-built:\n\n", root);
+    printf("\n");
 
     delete(root, 11);
 
     printTree("\npost-delete:\n\n", root);
+    printf("\n");
 
     // test it!
     {
         VERIFY_DELETE(root, input, 11);
+
+        VERIFY_BLOCK2(0, 4);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(3, 5);
+        VERIFY_BLOCK2(4, 7);
+        VERIFY_BLOCK2(5, 2);
+        VERIFY_BLOCK2(6, 6, 8);
+        VERIFY_BLOCK2(7, 9, 10);
     }
 
     depthFirstFree(root);
