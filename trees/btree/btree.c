@@ -665,7 +665,20 @@ static void demoteParent(block_t *me, block_t *sub)
          * without adding in a context structure that gets passed around
          * or something along those lines.
          */
-        assert(0);
+        memcpy(parent, carry, sizeof(block_t));
+        {
+            int i;
+            for (i = 0; i <= NUM_KEYS; i++) {
+                if (parent->keys[i].ptr) {
+                    parent->keys[i].ptr->parent = parent; /* fix backlinks. */
+                }
+            }
+        }
+
+        parent->parent = NULL;
+        free(carry);
+
+        return;
     }
 
 #if DELETE_DEBUG
@@ -2066,7 +2079,7 @@ static void test_deleteCase11a(void)
         VERIFY_BLOCK2(1, 1);
         VERIFY_BLOCK2(2, 3);
         VERIFY_BLOCK2(3, 5, 6);
-        VERIFY_BLOCK2(5, 2, 4);
+        VERIFY_BLOCK2(0, 2, 4); /* copied back into root block. */
     }
 
     depthFirstFree(root);
