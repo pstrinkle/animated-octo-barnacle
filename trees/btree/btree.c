@@ -1,5 +1,9 @@
 /*
  * Basic implementation of a B-tree.
+ *
+ * Just about all my test cases delete the right-most key.  They don't all, but
+ * too many do.  I think I favor testing this; so I should be a bit more
+ * programmatically thorough. :D
  */
 
 #include <assert.h>
@@ -25,28 +29,40 @@
 
 #define INSERT_DEBUG 0
 #define SPLIT_DEBUG 0
+#define DELETE_DEBUG 1
+
+#if DELETE_DEBUG
+#define DELETE_DPRINTF(...) \
+    do { fprintf(stderr, __VA_ARGS__); } while (0)
+#else
+#define DELETE_DPRINTF(...) do { } while (0)
+#endif
 
 #if INSERT_DEBUG
 #define INSERT_DPRINTF(...) \
-    do { \
-        fprintf(stderr, __VA_ARGS__); \
-    } while (0)
+    do { fprintf(stderr, __VA_ARGS__); } while (0)
 #else
-#define INSERT_DPRINTF(...) \
-    do { \
-    } while (0)
+#define INSERT_DPRINTF(...) do { } while (0)
 #endif
 
 #if SPLIT_DEBUG
 #define SPLIT_DPRINTF(...) \
-    do { \
-        fprintf(stderr, __VA_ARGS__); \
-    } while (0)
+    do { fprintf(stderr, __VA_ARGS__); } while (0)
 #else
-#define SPLIT_DPRINTF(...) \
-    do { \
-    } while (0)
+#define SPLIT_DPRINTF(...) do { } while (0)
 #endif
+
+#define VERIFY_BLOCK(ID, VALUES) \
+    test_verifyBlock((ID), (VALUES), NUM_ELEMENTS((VALUES)))
+
+#define VERIFY_BLOCK2(ID, ...) \
+    do { \
+        int X[] = {__VA_ARGS__}; \
+        test_verifyBlock((ID), X, NUM_ELEMENTS(X)); \
+    } while (0)
+
+#define VERIFY_DELETE(ROOT, INPUT, X) \
+    test_verifyDeletion((ROOT), (INPUT), NUM_ELEMENTS((INPUT)), (X));
 
 /******************************************************************************
  * Objects
@@ -79,6 +95,10 @@ static block_t *blockStorage[128];
 
 typedef void (*test_ptr_t)(void);
 
+static block_t *test_buildTree(block_t *root, int *input, int count);
+/* deleted is the value you expect to be missing, not the index in input */
+static void test_verifyDeletion(block_t *root, int *input, int count, int deleted);
+static void test_verifyTree(block_t *root, int *input, int count);
 static int test_verifyBlock(int block, int *values, int count);
 
 /******************************************************************************
@@ -108,7 +128,7 @@ static block_t *findLeftSibling(block_t *me);
 static void rotateRight(block_t *lSibling, block_t *me);
 static block_t *findRightSibling(block_t *me);
 static void rotateLeft(block_t *rSibling, block_t *me);
-static void demoteParent(block_t *me);
+static void demoteParent(block_t *me, block_t *sub);
 
 static void deleteLeaf(block_t *where, key_t *curr);
 static void delete(block_t *root, int value);
@@ -117,6 +137,7 @@ static void delete(block_t *root, int value);
 static void blockPrint(block_t *blk);
 /* print each block in a dfs pattern. */
 static void depthFirstPrint(block_t *blk);
+static void printTree(const char *lead, block_t *blk);
 
 static block_t *newBlock(void)
 {
@@ -193,8 +214,37 @@ static void blockAppend(block_t *insert, key_t *promoted, block_t *newblk)
                 newblk->id);
     }
 
-    insert->keys[insert->used].key = promoted->key; /* i think this is good.. */
+    /* always. */
+    if (newblk) {
+        newblk->parent = insert;
+    }
 
+    /*
+     * Convenient we know this will always be to either the beginning or end.
+     */
+    if (insert->used > 0) {
+        /* Insert before? */
+        if (promoted->key < insert->keys[0].key) {
+            /*
+             * In this insert case, the far right pointer should never be set.
+             */
+            assert(NULL == insert->keys[3].ptr);
+
+            key_t *start = &(insert->keys[0]);
+            /* Point to the start of the last entry. */
+            key_t *end = &(insert->keys[3]);
+            size_t len = (size_t)end - (size_t)start;
+
+            memmove(&(insert->keys[1]), start, len);
+
+            insert->keys[0].key = promoted->key;
+            insert->keys[0].ptr = newblk;
+            insert->used++;
+            return;
+        }
+    } /* append. */
+
+    insert->keys[insert->used].key = promoted->key; /* i think this is good.. */
     insert->keys[insert->used+1].ptr = newblk;
     insert->used++;
 
@@ -498,17 +548,49 @@ static void rotateLeft(block_t *rSibling, block_t *me)
     return;
 }
 
-static void demoteParent(block_t *me)
+static void demoteParent(block_t *me, block_t *sub)
 {
     int i;
 
-    /* the following are just ya know, if we get here and these fail it's a
+    /*
+     * The following are just ya know, if we get here and these fail it's a
      * serious non-recoverable issue.
      */
+
+    /*
+     * XXX: If we get here and me is root, and it's empty, could we have gotten
+     * here?
+     */
     assert(me->parent);
-    assert(me->parent->used > 1);
 
     block_t *parent = me->parent;
+    block_t *pushedHere = NULL;
+
+    {
+        int subid = -1;
+        if (sub) {
+            subid = sub->id;
+        }
+
+#if DELETE_DEBUG
+        DELETE_DPRINTF("demoteParent: me %d, my parent: %d, sub: %d\n",
+                me->id,
+                parent->id,
+                subid);
+
+        DELETE_DPRINTF("\nme: ");
+        blockPrint(me);
+
+        DELETE_DPRINTF("my parent: ");
+        blockPrint(parent);
+
+        if (sub) {
+            // XXX: sub will need a new parent once it's attached.
+            DELETE_DPRINTF("my sub: ");
+            blockPrint(sub);
+        }
+#endif
+    }
 
     /*
      * Find whomever points to me, may be left or right pointer, and demote
@@ -517,13 +599,37 @@ static void demoteParent(block_t *me)
     for (i = 0; i <= NUM_KEYS; i++) {
         if (parent->keys[i].ptr == me) {
             if (i == 0) {
-                insertLeaf(parent->keys[i+1].ptr, parent->keys[i].key);
+                pushedHere = parent->keys[i+1].ptr;
+
+                if (sub) {
+                    key_t k;
+                    k.key = parent->keys[i].key;
+
+                    blockAppend(parent->keys[i+1].ptr, &k, sub);
+                } else {
+                    insertLeaf(parent->keys[i+1].ptr, parent->keys[i].key);
+                }
 
                 block_t *end = parent + 1;
                 size_t len = (size_t)end - (size_t)&(parent->keys[i+1]);
                 memcpy(&(parent->keys[0]), &(parent->keys[i+1]), len);
             } else {
-                insertLeaf(parent->keys[i-1].ptr, parent->keys[i-1].key);
+                pushedHere = parent->keys[i-1].ptr;
+
+                if (sub) {
+                    key_t k;
+                    k.key = parent->keys[i-1].key;
+
+                    DELETE_DPRINTF("trying to append key: %d, with a pointer to: %d into %d\n",
+                            k.key,
+                            sub->id,
+                            parent->keys[i-1].ptr->id);
+
+                    blockAppend(parent->keys[i-1].ptr, &k, sub);
+                } else {
+                    insertLeaf(parent->keys[i-1].ptr, parent->keys[i-1].key);
+                }
+
                 parent->keys[i].ptr = parent->keys[i-1].ptr;
 
                 /* now move it to the left. */
@@ -538,14 +644,116 @@ static void demoteParent(block_t *me)
 
     parent->used--;
 
+#if DELETE_DEBUG
+    DELETE_DPRINTF("parent demoted here: blk %d\n", pushedHere->id);
+    blockPrint(pushedHere);
+#endif
+
+    if (parent->used > 0) {
+        return; /* yay, bail. */
+    }
+
+    /* Ok, now the parent block is empty! */
+    block_t *carry = parent->keys[0].ptr;
+
+    /* just for fun. */
+    memset(&parent->keys[0], 0x00, (NUM_KEYS+1) * sizeof(key_t));
+
+    /* was my parent the root block? */
+    if (NULL == parent->parent) {
+        /* this isn't an object where I can cleanly just replace the root;
+         * without adding in a context structure that gets passed around
+         * or something along those lines.
+         */
+        memcpy(parent, carry, sizeof(block_t));
+        {
+            int i;
+            for (i = 0; i <= NUM_KEYS; i++) {
+                if (parent->keys[i].ptr) {
+                    parent->keys[i].ptr->parent = parent; /* fix backlinks. */
+                }
+            }
+        }
+
+        parent->parent = NULL;
+        free(carry);
+
+        return;
+    }
+
+#if DELETE_DEBUG
+    DELETE_DPRINTF("\n\nparent (%d) is empty\n", parent->id);
+    blockPrint(parent);
+    DELETE_DPRINTF("don't abandon: %d, \n", carry->id);
+    blockPrint(carry);
+#endif
+
+    block_t *lSib = findLeftSibling(parent);
+    block_t *rSib = findRightSibling(parent);
+
+    DELETE_DPRINTF("left sib: 0x%p, right sib: 0x%p\n", lSib, rSib);
+
+    /* You only have a left sibling and it's insufficient. */
+    if (lSib && !rSib && lSib->used == 1) {
+#if DELETE_DEBUG
+        DELETE_DPRINTF("lSib insufficient (no rSib):\n");
+        blockPrint(lSib);
+#endif
+
+        demoteParent(parent, carry);
+        free(parent);
+        return;
+    }
+
+    /* You only have a right sibling and it's insufficient. */
+    if (rSib && !lSib && rSib->used == 1) {
+#if DELETE_DEBUG
+        fprintf(stderr, "rSib insufficient (no lSib):\n");
+        blockPrint(rSib);
+#endif
+
+        demoteParent(parent, carry);
+        free(parent);
+        return;
+    }
+
+    /* Both siblings are valid, but insufficient */
+    if ((lSib && lSib->used == 1) && (rSib && rSib->used == 1)) {
+#if DELETE_DEBUG
+        fprintf(stderr, "both valid, insufficient:\n");
+        blockPrint(lSib);
+        blockPrint(rSib);
+#endif
+
+        demoteParent(parent, carry);
+        free(parent);
+        return;
+    }
+
+    if (lSib && lSib->used > 1) {
+#if DELETE_DEBUG
+        fprintf(stderr, "lSib is sufficient, so probably rotate:\n");
+        blockPrint(lSib);
+#endif
+
+    } else {
+#if DELETE_DEBUG
+        fprintf(stderr, "rSib is sufficient, so probably rotate:\n");
+        blockPrint(rSib);
+#endif
+    }
+
+    assert(0);
+
     return;
 }
 
 static void deleteLeaf(block_t *where, key_t *curr)
 {
-    block_t *lSibling, *rSibling;
+    block_t *lSib, *rSib;
 
-    /* we know it's a leaf, so we delete it, then, we need to check if that was
+    /*
+     * We know it's a leaf, so we delete it, then, we need to check if that was
      * the last item in the block.
      */
 
@@ -577,6 +785,7 @@ static void deleteLeaf(block_t *where, key_t *curr)
     /* if this is root. */
     if (!where->parent) {
         fprintf(stderr, "root node is empty!\n");
+        assert(0);
         return;
     }
 
@@ -598,12 +807,6 @@ static void deleteLeaf(block_t *where, key_t *curr)
      * insufficient.  The definition here for insufficient means, that there is
      * only one key in the block, and therefore moving that key or promoting it
      * will leave us with an empty block.
-     */
-
-    /*
-     * XXX: This code only checks immediate siblings for rotation, whereas
-     * really; to be generic, it could roll siblings along if any sibling has
-     * > 1 key in it.
      */
 
     /*
@@ -634,6 +837,7 @@ static void deleteLeaf(block_t *where, key_t *curr)
      * -----------------------------------------------
      * | 8    | Y      | Y       | Y       | rot. -> |
      * -----------------------------------------------
+     * | 9 ... (not yet documented, will document when I handle it)
      *
      * + more complex; detailed later.
      * ++ push neighbor down, free block, three variations for immediate
@@ -648,74 +852,57 @@ static void deleteLeaf(block_t *where, key_t *curr)
      * the same balanced tree.
      */
 
+    /* Determine if immediate siblings are sufficient. */
+
     /*
-     * Determine if immediate siblings are sufficient.
-     *
-     * XXX: make generic and check all siblings and roll them when necessary to
-     * then re-check immediate siblings. (case 9), which collapses into one of
-     * the 8.
+     * XXX: This code only checks immediate siblings for rotation, whereas
+     * really; to be generic, it could roll siblings along if any sibling has
+     * > 1 key in it.
      */
 
     /*
-     * find siblings, you seriously will have at least one, we know that by the
+     * Find siblings, you seriously will have at least one, we know that by the
      * balanced tree properties.
      */
-    lSibling = findLeftSibling(where);
-    rSibling = findRightSibling(where);
+    lSib = findLeftSibling(where);
+    rSib = findRightSibling(where);
 
-    fprintf(stderr,
-            "left sibling: 0x%x, right sibling: 0x%x\n",
-            lSibling,
-            rSibling);
+    fprintf(stderr, "left sib: 0x%p, right sib: 0x%p\n", lSib, rSib);
 
+    /*
+     * This code is going to be effectively in two places, which means maybe
+     * I can balance it more nicely; I'll refactor later.
+     */
 
-    if (lSibling && !rSibling && lSibling->used == 1) {
-        /* you only have a left sibling and it's insufficient. */
-        if (where->parent->used > 1) {
-            fprintf(stderr, "case 4\n");
-            demoteParent(where);
-            free(where);
-        } else {
-            fprintf(stderr, "case 1\n");
-        }
-
-        return;
-    }
-    if (rSibling && !lSibling && rSibling->used == 1) {
-        /* you only have a right sibling and it's insufficient. */
-        if (where->parent->used > 1) {
-            fprintf(stderr, "case 4\n");
-            demoteParent(where);
-            free(where);
-        } else {
-            fprintf(stderr, "case 1\n");
-        }
-
+    /* You only have a left sibling and it's insufficient. */
+    if (lSib && !rSib && lSib->used == 1) {
+        demoteParent(where, NULL);
+        free(where);
         return;
     }
 
-    /* both siblings are valid, but insufficient */
-    if ((lSibling && lSibling->used == 1) &&
-        (rSibling && rSibling->used == 1)) {
-
-        if (where->parent->used > 1) {
-            demoteParent(where);
-            free(where);
-        } else {
-            fprintf(stderr, "parent is insufficient (case 1)\n");
-        }
-
+    /* You only have a right sibling and it's insufficient. */
+    if (rSib && !lSib && rSib->used == 1) {
+        demoteParent(where, NULL);
+        free(where);
         return;
     }
 
-    if (lSibling && lSibling->used > 1) {
+    /* Both siblings are valid, but insufficient */
+    if ((lSib && lSib->used == 1) && (rSib && rSib->used == 1)) {
+        demoteParent(where, NULL);
+        free(where);
+        return;
+    }
+
+    if (lSib && lSib->used > 1) {
         /*
          * If there is a left sibling and it's valid, we don't care about the
          * right.
          */
 
         /* rotate right. */
-        return rotateRight(lSibling, where);
+        return rotateRight(lSib, where);
     } else {
         /*
          * If no left sibling, or left sibling not valid, the right sibling
@@ -723,7 +910,7 @@ static void deleteLeaf(block_t *where, key_t *curr)
          */
 
         /* rotate left. */
-        return rotateLeft(rSibling, where);
+        return rotateLeft(rSib, where);
     }
 
     return;
@@ -734,6 +921,8 @@ static void delete(block_t *root, int value)
     int i;
     key_t *curr;
     int leaf = 0;
+
+    DELETE_DPRINTF("deleting: %d\n", value);
 
     /* 1. Find the block. */
     block_t *where = search(root, value);
@@ -760,6 +949,7 @@ static void delete(block_t *root, int value)
     } else {
         /* 3b. Handle parent deletion. */
         fprintf(stderr, "this node has children!\n");
+        assert(0);
         //deleteInternal();
     }
 }
@@ -934,7 +1124,10 @@ static void blockPrint(block_t *blk)
             printf("| ");
         }
     }
+
     printf("\n");
+
+    return;
 }
 
 static void depthFirstPrint(block_t *blk)
@@ -971,6 +1164,16 @@ static void depthFirstPrint(block_t *blk)
             depthFirstPrint(blk->keys[i].ptr);
         }
     }
+
+    return;
+}
+
+static void printTree(const char *lead, block_t *blk)
+{
+    printf("%s", lead);
+    depthFirstPrint(blk);
+
+    return;
 }
 
 static void depthFirstFree(block_t *blk)
@@ -984,16 +1187,62 @@ static void depthFirstFree(block_t *blk)
     }
 
     free(blk);
+
+    return;
+}
+
+static block_t *test_buildTree(block_t *root, int *input, int count)
+{
+    int i;
+
+    root = newBlock();
+    assert(root);
+
+    for (i = 0; i < count; i++) {
+        insert(root, input[i]);
+    }
+
+    test_verifyTree(root, input, count);
+
+    return root;
+}
+
+static void test_verifyDeletion(block_t *root, int *input, int count, int deleted)
+{
+    int i;
+    block_t *f;
+
+    for (i = 0; i < count; i++) {
+        f = search(root, input[i]);
+        if (input[i] == deleted) {
+            assert(NULL == f);
+        } else {
+            assert(NULL != f);
+        }
+    }
+}
+
+static void test_verifyTree(block_t *root, int *input, int count)
+{
+    int i;
+    block_t *f;
+
+    for (i = 0; i < count; i++) {
+        f = search(root, input[i]);
+        assert(NULL != f);
+    }
 }
 
 static int test_verifyBlock(int block, int *values, int count)
 {
     int i, ret;
     block_t *blk = blockStorage[block];
+
     if (blk->used != count) {
         ret = 0;
         goto check;
     }
+
     for (i = 0; i < blk->used; i++) {
         if (blk->keys[i].key != values[i]) {
             ret = 0;
@@ -1001,7 +1250,7 @@ static int test_verifyBlock(int block, int *values, int count)
         }
     }
 
-    /* it matched keys.  we don't need to deliberately check pointers yet. */
+    /* It matched keys.  we don't need to deliberately check pointers yet. */
     ret = 1;
 
 check:
@@ -1012,28 +1261,19 @@ check:
 static void test_insertBalance(void)
 {
     int i;
-    int first = 1;
-    int count = 50;
-    block_t *f;
+    int input[50];
     block_t *root = NULL;
 
     printf("testing insert with double split\n");
 
-    root = newBlock();
-    assert(NULL != root);
-
-    for (i = first; i < (first + count); i++) {
-        insert(root, i);
+    for (i = 0; i < NUM_ELEMENTS(input); i++) {
+        input[i] = i + 1;
     }
+
+    root = test_buildTree(root, input, NUM_ELEMENTS(input));
 
     printf("\n\n");
     depthFirstPrint(root);
-
-    /* verify we can find all nodes entered in. */
-    for (i = first; i < (first + count); i++) {
-        f = search(root, i);
-        assert(NULL != f);
-    }
 
     depthFirstFree(root);
 
@@ -1053,52 +1293,26 @@ static void test_insertBalance(void)
  */
 static void test_deleteLeafFirstSimple(void)
 {
-    int i;
     int input[] = {1, 2, 3, 4};
-    block_t *f;
     block_t *root = NULL;
 
     printf("testing delete leaf basic\n");
 
-    root = newBlock();
-    assert(NULL != root);
+    root = test_buildTree(root, input, NUM_ELEMENTS(input));
 
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        insert(root, input[i]);
-    }
-
-    printf("\nfully-built:\n\n");
-    depthFirstPrint(root);
-
-    /* verify we can find all nodes entered in. */
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        f = search(root, input[i]);
-        assert(NULL != f);
-    }
+    printTree("\nfully-built:\n\n", root);
 
     delete(root, 3);
 
-    printf("\npost-delete:\n\n");
-    depthFirstPrint(root);
+    printTree("\npost-delete:\n\n", root);
 
     // test it!
     {
-        for (i = 0; i < NUM_ELEMENTS(input); i++) {
-            f = search(root, input[i]);
-            if (input[i] == 3) {
-                assert(NULL == f);
-            } else {
-                assert(NULL != f);
-            }
-        }
+        VERIFY_DELETE(root, input, 3);
 
-        int zero[] = {2};
-        int first[] = {1};
-        int second[] = {4};
-
-        test_verifyBlock(0, zero, NUM_ELEMENTS(zero));
-        test_verifyBlock(1, first, NUM_ELEMENTS(first));
-        test_verifyBlock(2, second, NUM_ELEMENTS(second));
+        VERIFY_BLOCK2(0, 2);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 4);
     }
 
     depthFirstFree(root);
@@ -1119,43 +1333,27 @@ static void test_deleteLeafFirstSimple(void)
  */
 static void test_deleteLeafEndSimple(void)
 {
-    int i;
-    int first = 1;
-    int count = 4;
-    block_t *f;
+    int input[] = {1, 2, 3, 4};
     block_t *root = NULL;
 
     printf("testing delete leaf basic\n");
 
-    root = newBlock();
-    assert(NULL != root);
+    root = test_buildTree(root, input, NUM_ELEMENTS(input));
 
-    for (i = first; i < (first + count); i++) {
-        insert(root, i);
-    }
-
-    printf("\nfully-built:\n\n");
-    depthFirstPrint(root);
-
-    /* verify we can find all nodes entered in. */
-    for (i = first; i < (first + count); i++) {
-        f = search(root, i);
-        assert(NULL != f);
-    }
+    printTree("\nfully-built:\n\n", root);
 
     delete(root, 4);
 
-    for (i = first; i < (first + count); i++) {
-        f = search(root, i);
-        if (i == count) {
-            assert(NULL == f);
-        } else {
-            assert(NULL != f);
-        }
-    }
+    printTree("\npost-delete:\n\n", root);
 
-    printf("\npost-delete:\n\n");
-    depthFirstPrint(root);
+    // test it!
+    {
+        VERIFY_DELETE(root, input, 4);
+
+        VERIFY_BLOCK2(0, 2);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+    }
 
     depthFirstFree(root);
 
@@ -1177,59 +1375,30 @@ static void test_deleteLeafEndSimple(void)
  */
 static void test_deleteCase2(void)
 {
-    int i;
     int input[] = {1, 2, 3, 4, 5, 6, 7, 8};
-    block_t *f;
     block_t *root = NULL;
 
     printf("testing delete leaf case 2\n");
 
-    root = newBlock();
-    assert(NULL != root);
+    root = test_buildTree(root, input, NUM_ELEMENTS(input));
 
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        insert(root, input[i]);
-    }
-
-    printf("\nfully-built:\n\n");
-    depthFirstPrint(root);
-
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        f = search(root, input[i]);
-        assert(NULL != f);
-    }
+    printTree("\nfully-built:\n\n", root);
 
     delete(root, 5);
 
-    printf("\npost-delete:\n\n");
-    depthFirstPrint(root);
+    printTree("\npost-delete:\n\n", root);
 
     // test it!
     {
-        for (i = 0; i < NUM_ELEMENTS(input); i++) {
-            f = search(root, input[i]);
-            if (input[i] == 5) {
-                assert(NULL == f);
-            } else {
-                assert(NULL != f);
-            }
-        }
+        VERIFY_DELETE(root, input, 5);
 
-        int zero[] = {4};
-        int one[] = {1};
-        int two[] = {3};
-        int three[] = {6};
-        int four[] = {8};
-        int five[] = {2};
-        int six[] = {7};
-
-        test_verifyBlock(0, zero, NUM_ELEMENTS(zero));
-        test_verifyBlock(1, one, NUM_ELEMENTS(one));
-        test_verifyBlock(2, two, NUM_ELEMENTS(two));
-        test_verifyBlock(3, three, NUM_ELEMENTS(three));
-        test_verifyBlock(4, four, NUM_ELEMENTS(four));
-        test_verifyBlock(5, five, NUM_ELEMENTS(five));
-        test_verifyBlock(6, six, NUM_ELEMENTS(six));
+        VERIFY_BLOCK2(0, 4);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(3, 6);
+        VERIFY_BLOCK2(4, 8);
+        VERIFY_BLOCK2(5, 2);
+        VERIFY_BLOCK2(6, 7);
     }
 
     depthFirstFree(root);
@@ -1252,293 +1421,31 @@ static void test_deleteCase2(void)
  */
 static void test_deleteCase3(void)
 {
-    int i;
     int input[] = {1, 2, 3, 4, 5, 8, 9, 6};
-    block_t *f;
     block_t *root = NULL;
 
     printf("testing delete leaf case 3\n");
 
-    root = newBlock();
-    assert(NULL != root);
+    root = test_buildTree(root, input, NUM_ELEMENTS(input));
 
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        insert(root, input[i]);
-    }
-
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        f = search(root, input[i]);
-        assert(NULL != f);
-    }
-
-    printf("\nfully-built:\n\n");
-    depthFirstPrint(root);
+    printTree("\nfully-built:\n\n", root);
 
     delete(root, 9);
 
-    printf("\npost-delete:\n\n");
-    depthFirstPrint(root);
-
-    depthFirstFree(root);
-
-    return;
-}
-
-/*
- * This is leaf delete case 5a.
- *
- *      |4|                        |4|
- *    /      \                   /      \
- *   |2|     |6|8|        =>    |2|     |6|9|
- *  /  \    /  \  \             /  \    /   \   \
- * |1| |3| |5| |7| |9|10|      |1| |3| |5|  |8| |10|
- *
- * Deleting 7, we rotate left because the right sibling has sufficient keys.
- *
- * To create this, we did insert: 1-10.
- */
-static void test_deleteCase5a(void)
-{
-    int i;
-    int input[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
-    block_t *f;
-    block_t *root = NULL;
-
-    printf("testing delete leaf case 5a\n");
-
-    root = newBlock();
-    assert(NULL != root);
-
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        insert(root, input[i]);
-    }
-
-    printf("\nfully-built:\n\n");
-    depthFirstPrint(root);
-
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        f = search(root, input[i]);
-        assert(NULL != f);
-    }
-
-    delete(root, 7);
-
-    printf("\npost-delete:\n\n");
-    depthFirstPrint(root);
+    printTree("\npost-delete:\n\n", root);
 
     // test it!
     {
-        for (i = 0; i < NUM_ELEMENTS(input); i++) {
-            f = search(root, input[i]);
-            if (input[i] == 7) {
-                assert(NULL == f);
-            } else {
-                assert(NULL != f);
-            }
-        }
+        VERIFY_DELETE(root, input, 9);
+
+        VERIFY_BLOCK2(0, 4);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(3, 5);
+        VERIFY_BLOCK2(4, 8);
+        VERIFY_BLOCK2(5, 2);
+        VERIFY_BLOCK2(6, 6);
     }
-
-    depthFirstFree(root);
-
-    return;
-}
-
-/*
- * This is leaf delete case 5b.
- *
- *      |4|                        |4|
- *    /      \                   /      \
- *   |2|     |6|9|        =>    |2|     |7|9|
- *  /  \    /  \     \          /  \    /   \   \
- * |1| |3| |5| |7|8| |11|      |1| |3| |6|  |8| |11|
- *
- * Deleting 5, we rotate left because the right sibling has sufficient keys.
- *
- * To create this, we did insert: 1-7, 9, 11, 8.
- */
-static void test_deleteCase5b(void)
-{
-    int i;
-    int input[] = {1, 2, 3, 4, 5, 6, 7, 9, 11, 8};
-    block_t *f;
-    block_t *root = NULL;
-
-    printf("testing delete leaf case 5b\n");
-
-    root = newBlock();
-    assert(NULL != root);
-
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        insert(root, input[i]);
-    }
-
-    printf("\nfully-built:\n\n");
-    depthFirstPrint(root);
-
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        f = search(root, input[i]);
-        assert(NULL != f);
-    }
-
-    delete(root, 5);
-
-    printf("\npost-delete:\n\n");
-    depthFirstPrint(root);
-
-    // test it!
-    {
-        for (i = 0; i < NUM_ELEMENTS(input); i++) {
-            f = search(root, input[i]);
-            if (input[i] == 5) {
-                assert(NULL == f);
-            } else {
-                assert(NULL != f);
-            }
-        }
-    }
-
-    depthFirstFree(root);
-
-    return;
-}
-
-/*
- * This is leaf delete case 6.
- *
- *      |4|                        |4|
- *    /      \                   /      \
- *   |2|     |6|9|        =>    |2|     |6|8|
- *  /  \    /  \     \         /  \    /   \   \
- * |1| |3| |5| |7|8| |10|     |1| |3| |5|  |7| |9|
- *
- * Deleting 10, we rotate right because the left sibling has sufficient keys.
- *
- * To create this, we did insert: 1-7, 10, 9, 8
- */
-static void test_deleteCase6(void)
-{
-    int i;
-    int input[] = {1, 2, 3, 4, 5, 6, 7, 10, 9, 8};
-    block_t *f;
-    block_t *root = NULL;
-
-    printf("testing delete leaf case 6\n");
-
-    root = newBlock();
-    assert(NULL != root);
-
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        insert(root, input[i]);
-    }
-
-    fprintf(stderr, "fully built\n");
-
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        f = search(root, input[i]);
-        assert(NULL != f);
-    }
-
-    printf("\nfully-built:\n\n");
-    depthFirstPrint(root);
-
-    delete(root, 10);
-
-    printf("\npost-delete:\n\n");
-    depthFirstPrint(root);
-
-    depthFirstFree(root);
-
-    return;
-}
-
-/*
- * This is leaf delete case 7.
- *
- *      |4|                           |4|
- *    /      \                      /      \
- *   |2|     |15|25|         =>    |2|     |14|25|
- *  /  \    /      \    \         /  \    /   \    \
- * |1| |3| |10|14| |20| |30|     |1| |3| |10| |15| |30|
- *
- * Deleting 20, we rotate right because the left sibling has sufficient keys.
- *
- * To create this, we did insert: 1-4, 10, 15, 20, 25, 30, 14
- */
-static void test_deleteCase7(void)
-{
-    int i;
-    int input[] = {1, 2, 3, 4, 10, 15, 20, 25, 30, 14};
-    block_t *f;
-    block_t *root = NULL;
-
-    printf("testing delete leaf case 7\n");
-
-    root = newBlock();
-    assert(NULL != root);
-
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        insert(root, input[i]);
-    }
-
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        f = search(root, input[i]);
-        assert(NULL != f);
-    }
-
-    printf("\nfully-built:\n\n");
-    depthFirstPrint(root);
-
-    delete(root, 20);
-
-    printf("\npost-delete:\n\n");
-    depthFirstPrint(root);
-
-    depthFirstFree(root);
-
-    return;
-}
-
-/*
- * This is leaf delete case 8.
- *
- *      |4|                              |4|
- *    /      \                         /      \
- *   |2|     |15|25|            =>    |2|     |14|25|
- *  /  \    /     \    \            /  \    /   \    \
- * |1| |3| |10|14| |20| |30|31|     |1| |3| |10| |15| |30|31|
- *
- * Deleting 20, we rotate right because the left sibling has sufficient keys.
- *
- * To create this, we did insert: 1-4, 10, 15, 20, 25, 30, 14, 31
- */
-static void test_deleteCase8(void)
-{
-    int i;
-    int input[] = {1, 2, 3, 4, 10, 15, 20, 25, 30, 14, 31};
-    block_t *f;
-    block_t *root = NULL;
-
-    printf("testing delete leaf case 7\n");
-
-    root = newBlock();
-    assert(NULL != root);
-
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        insert(root, input[i]);
-    }
-
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        f = search(root, input[i]);
-        assert(NULL != f);
-    }
-
-    printf("\nfully-built:\n\n");
-    depthFirstPrint(root);
-
-    delete(root, 20);
-
-    printf("\npost-delete:\n\n");
-    depthFirstPrint(root);
 
     depthFirstFree(root);
 
@@ -1563,43 +1470,30 @@ static void test_deleteCase8(void)
  */
 static void test_deleteCase4a(void)
 {
-    int i;
     int input[] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
-    block_t *f;
     block_t *root = NULL;
 
     printf("testing delete leaf case 4a\n");
 
-    root = newBlock();
-    assert(NULL != root);
+    root = test_buildTree(root, input, NUM_ELEMENTS(input));
 
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        insert(root, input[i]);
-    }
-
-    printf("\nfully-built:\n\n");
-    depthFirstPrint(root);
-
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        f = search(root, input[i]);
-        assert(NULL != f);
-    }
+    printTree("\nfully-built:\n\n", root);
 
     delete(root, 9);
 
-    printf("\npost-delete:\n\n");
-    depthFirstPrint(root);
+    printTree("\npost-delete:\n\n", root);
 
     // test it!
     {
-        for (i = 0; i < NUM_ELEMENTS(input); i++) {
-            f = search(root, input[i]);
-            if (input[i] == 9) {
-                assert(NULL == f);
-            } else {
-                assert(NULL != f);
-            }
-        }
+        VERIFY_DELETE(root, input, 9);
+
+        VERIFY_BLOCK2(0, 4);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(3, 5);
+        VERIFY_BLOCK2(4, 7, 8);
+        VERIFY_BLOCK2(5, 2);
+        VERIFY_BLOCK2(6, 6);
     }
 
     depthFirstFree(root);
@@ -1625,43 +1519,30 @@ static void test_deleteCase4a(void)
  */
 static void test_deleteCase4b(void)
 {
-    int i;
     int input[] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
-    block_t *f;
     block_t *root = NULL;
 
     printf("testing delete leaf case 4b\n");
 
-    root = newBlock();
-    assert(NULL != root);
+    root = test_buildTree(root, input, NUM_ELEMENTS(input));
 
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        insert(root, input[i]);
-    }
-
-    printf("\nfully-built:\n\n");
-    depthFirstPrint(root);
-
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        f = search(root, input[i]);
-        assert(NULL != f);
-    }
+    printTree("\nfully-built:\n\n", root);
 
     delete(root, 7);
 
-    printf("\npost-delete:\n\n");
-    depthFirstPrint(root);
+    printTree("\npost-delete:\n\n", root);
 
     // test it!
     {
-        for (i = 0; i < NUM_ELEMENTS(input); i++) {
-            f = search(root, input[i]);
-            if (input[i] == 7) {
-                assert(NULL == f);
-            } else {
-                assert(NULL != f);
-            }
-        }
+        VERIFY_DELETE(root, input, 7);
+
+        VERIFY_BLOCK2(0, 4);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(3, 5, 6);
+        VERIFY_BLOCK2(5, 2);
+        VERIFY_BLOCK2(6, 8);
+        VERIFY_BLOCK2(7, 9);
     }
 
     depthFirstFree(root);
@@ -1687,43 +1568,518 @@ static void test_deleteCase4b(void)
  */
 static void test_deleteCase4c(void)
 {
-    int i;
     int input[] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
-    block_t *f;
     block_t *root = NULL;
 
     printf("testing delete leaf case 4c\n");
 
-    root = newBlock();
-    assert(NULL != root);
+    root = test_buildTree(root, input, NUM_ELEMENTS(input));
 
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        insert(root, input[i]);
-    }
-
-    printf("\nfully-built:\n\n");
-    depthFirstPrint(root);
-
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        f = search(root, input[i]);
-        assert(NULL != f);
-    }
+    printTree("\nfully-built:\n\n", root);
 
     delete(root, 5);
 
-    printf("\npost-delete:\n\n");
-    depthFirstPrint(root);
+    printTree("\npost-delete:\n\n", root);
 
     // test it!
     {
-        for (i = 0; i < NUM_ELEMENTS(input); i++) {
-            f = search(root, input[i]);
-            if (input[i] == 5) {
-                assert(NULL == f);
-            } else {
-                assert(NULL != f);
-            }
-        }
+        VERIFY_DELETE(root, input, 5);
+
+        VERIFY_BLOCK2(0, 4);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(4, 6, 7);
+        VERIFY_BLOCK2(5, 2);
+        VERIFY_BLOCK2(6, 8);
+        VERIFY_BLOCK2(7, 9);
+    }
+
+    depthFirstFree(root);
+
+    return;
+}
+
+/*
+ * This is leaf delete case 5a.
+ *
+ *      |4|                        |4|
+ *    /      \                   /      \
+ *   |2|     |6|8|        =>    |2|     |6|9|
+ *  /  \    /  \  \             /  \    /   \   \
+ * |1| |3| |5| |7| |9|10|      |1| |3| |5|  |8| |10|
+ *
+ * Deleting 7, we rotate left because the right sibling has sufficient keys.
+ *
+ * To create this, we did insert: 1-10.
+ */
+static void test_deleteCase5a(void)
+{
+    int input[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    block_t *root = NULL;
+
+    printf("testing delete leaf case 5a\n");
+
+    root = test_buildTree(root, input, NUM_ELEMENTS(input));
+
+    printTree("\nfully-built:\n\n", root);
+
+    delete(root, 7);
+
+    printTree("\npost-delete:\n\n", root);
+
+    // test it!
+    {
+        VERIFY_DELETE(root, input, 7);
+
+        VERIFY_BLOCK2(0, 4);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(3, 5);
+        VERIFY_BLOCK2(4, 8);
+        VERIFY_BLOCK2(5, 2);
+        VERIFY_BLOCK2(6, 6, 9);
+        VERIFY_BLOCK2(7, 10);
+    }
+
+    depthFirstFree(root);
+
+    return;
+}
+
+/*
+ * This is leaf delete case 5b.
+ *
+ *      |4|                        |4|
+ *    /      \                   /      \
+ *   |2|     |6|9|        =>    |2|     |7|9|
+ *  /  \    /  \     \          /  \    /   \   \
+ * |1| |3| |5| |7|8| |11|      |1| |3| |6|  |8| |11|
+ *
+ * Deleting 5, we rotate left because the right sibling has sufficient keys.
+ *
+ * To create this, we did insert: 1-7, 9, 11, 8.
+ */
+static void test_deleteCase5b(void)
+{
+    int input[] = {1, 2, 3, 4, 5, 6, 7, 9, 11, 8};
+    block_t *root = NULL;
+
+    printf("testing delete leaf case 5b\n");
+
+    root = test_buildTree(root, input, NUM_ELEMENTS(input));
+
+    printTree("\nfully-built:\n\n", root);
+
+    delete(root, 5);
+
+    printTree("\npost-delete:\n\n", root);
+
+    // test it!
+    {
+        VERIFY_DELETE(root, input, 5);
+
+        VERIFY_BLOCK2(0, 4);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(3, 6);
+        VERIFY_BLOCK2(4, 8);
+        VERIFY_BLOCK2(5, 2);
+        VERIFY_BLOCK2(6, 7, 9);
+        VERIFY_BLOCK2(7, 11);
+    }
+
+    depthFirstFree(root);
+
+    return;
+}
+
+/*
+ * This is leaf delete case 6.
+ *
+ *      |4|                        |4|
+ *    /      \                   /      \
+ *   |2|     |6|9|        =>    |2|     |6|8|
+ *  /  \    /  \     \         /  \    /   \   \
+ * |1| |3| |5| |7|8| |10|     |1| |3| |5|  |7| |9|
+ *
+ * Deleting 10, we rotate right because the left sibling has sufficient keys.
+ *
+ * To create this, we did insert: 1-7, 10, 9, 8
+ */
+static void test_deleteCase6(void)
+{
+    int input[] = {1, 2, 3, 4, 5, 6, 7, 10, 9, 8};
+    block_t *root = NULL;
+
+    printf("testing delete leaf case 6\n");
+
+    root = test_buildTree(root, input, NUM_ELEMENTS(input));
+
+    printTree("\nfully-built:\n\n", root);
+
+    delete(root, 10);
+
+    printTree("\npost-delete:\n\n", root);
+
+    // test it!
+    {
+        VERIFY_DELETE(root, input, 10);
+
+        VERIFY_BLOCK2(0, 4);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(3, 5);
+        VERIFY_BLOCK2(4, 7);
+        VERIFY_BLOCK2(5, 2);
+        VERIFY_BLOCK2(6, 6, 8);
+        VERIFY_BLOCK2(7, 9);
+    }
+
+    depthFirstFree(root);
+
+    return;
+}
+
+/*
+ * This is leaf delete case 7.
+ *
+ *      |4|                           |4|
+ *    /      \                      /      \
+ *   |2|     |15|25|         =>    |2|     |14|25|
+ *  /  \    /      \    \         /  \    /   \    \
+ * |1| |3| |10|14| |20| |30|     |1| |3| |10| |15| |30|
+ *
+ * Deleting 20, we rotate right because the left sibling has sufficient keys.
+ *
+ * To create this, we did insert: 1-4, 10, 15, 20, 25, 30, 14
+ */
+static void test_deleteCase7(void)
+{
+    int input[] = {1, 2, 3, 4, 10, 15, 20, 25, 30, 14};
+    block_t *root = NULL;
+
+    printf("testing delete leaf case 7\n");
+
+    root = test_buildTree(root, input, NUM_ELEMENTS(input));
+
+    printTree("\nfully-built:\n\n", root);
+
+    delete(root, 20);
+
+    printTree("\npost-delete:\n\n", root);
+
+    // test it!
+    {
+        VERIFY_DELETE(root, input, 20);
+
+        VERIFY_BLOCK2(0, 4);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(3, 10);
+        VERIFY_BLOCK2(4, 15);
+        VERIFY_BLOCK2(5, 2);
+        VERIFY_BLOCK2(6, 14, 25);
+        VERIFY_BLOCK2(7, 30);
+    }
+
+    depthFirstFree(root);
+
+    return;
+}
+
+/*
+ * This is leaf delete case 8.
+ *
+ *      |4|                              |4|
+ *    /      \                         /      \
+ *   |2|     |15|25|            =>    |2|     |14|25|
+ *  /  \    /     \    \             /  \    /   \    \
+ * |1| |3| |10|14| |20| |30|31|     |1| |3| |10| |15| |30|31|
+ *
+ * Deleting 20, we rotate right because the left sibling has sufficient keys.
+ *
+ * To create this, we did insert: 1-4, 10, 15, 20, 25, 30, 14, 31
+ */
+static void test_deleteCase8(void)
+{
+    int input[] = {1, 2, 3, 4, 10, 15, 20, 25, 30, 14, 31};
+    block_t *root = NULL;
+
+    printf("testing delete leaf case 8\n");
+
+    root = test_buildTree(root, input, NUM_ELEMENTS(input));
+
+    printTree("\nfully-built:\n\n", root);
+
+    delete(root, 20);
+
+    printTree("\npost-delete:\n\n", root);
+
+    // test it!
+    {
+        VERIFY_DELETE(root, input, 20);
+
+        VERIFY_BLOCK2(0, 4);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(3, 10);
+        VERIFY_BLOCK2(4, 15);
+        VERIFY_BLOCK2(5, 2);
+        VERIFY_BLOCK2(6, 14, 25);
+        VERIFY_BLOCK2(7, 30, 31);
+    }
+
+    depthFirstFree(root);
+
+    return;
+}
+
+/*
+ * This is leaf delete case 10a.
+ *
+ *       |4|8|                            |4|
+ *     /    \      \                    /     \
+ *   |2|     |6|     |10|        =>    |2|     |6|8|
+ *  /  \    /   \    /   \             /  \    /  \  \
+ * |1| |3| |5| |7| |9| |11|          |1| |3| |5| |7| |9|10|
+ *
+ * Delete 11.
+ *
+ * Deleting 11, pushes 10 into the block with 9, which leaves the previous
+ * block empty.  We then push 8 into 6, and make them buddies.
+ *
+ * To create this, we did insert: 1-11
+ */
+static void test_deleteCase10a(void)
+{
+    int input[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+    block_t *root = NULL;
+
+    printf("testing delete leaf case 10a\n");
+
+    root = test_buildTree(root, input, NUM_ELEMENTS(input));
+
+    printTree("\nfully-built:\n\n", root);
+    printf("\n");
+
+    delete(root, 11);
+
+    printTree("\npost-delete:\n\n", root);
+    printf("\n");
+
+    // test it!
+    {
+        VERIFY_DELETE(root, input, 11);
+
+        VERIFY_BLOCK2(0, 4);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(3, 5);
+        VERIFY_BLOCK2(4, 7);
+        VERIFY_BLOCK2(5, 2);
+        VERIFY_BLOCK2(6, 6, 8);
+        VERIFY_BLOCK2(7, 9, 10);
+    }
+
+    depthFirstFree(root);
+
+    return;
+}
+
+/*
+ * This is leaf delete case 10b.
+ *
+ *       |4|8|                            |8|
+ *     /    \       \                   /          \
+ *   |2|     |6|     |10|        =>    |2|4|        |10|
+ *  /  \    /   \    /   \            /  \  \       /  \
+ * |1| |3| |5| |7| |9| |11|         |1| |3| |5|6|  |9| |11|
+ *
+ * Delete 7.
+ *
+ * To create this, we did insert: 1-11
+ */
+static void test_deleteCase10b(void)
+{
+    int input[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+    block_t *root = NULL;
+
+    printf("testing delete leaf case 10b\n");
+
+    root = test_buildTree(root, input, NUM_ELEMENTS(input));
+
+    printTree("\nfully-built:\n\n", root);
+    printf("\n");
+
+    delete(root, 7);
+
+    printTree("\npost-delete:\n\n", root);
+    printf("\n");
+
+    // test it!
+    {
+        VERIFY_DELETE(root, input, 7);
+
+        VERIFY_BLOCK2(0, 8);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(3, 5, 6);
+        VERIFY_BLOCK2(5, 2, 4);
+        VERIFY_BLOCK2(7, 9);
+        VERIFY_BLOCK2(8, 11);
+        VERIFY_BLOCK2(9, 10);
+    }
+
+    depthFirstFree(root);
+
+    return;
+}
+
+/*
+ * This is leaf delete case 10c.
+ *
+ *       |4|8|                            |8|
+ *     /    \       \                   /         \
+ *   |2|     |6|     |10|        =>    |4|6|       |10|
+ *  /  \    /   \    /   \            /   \  \     /  \
+ * |1| |3| |5| |7| |9| |11|         |2|3| |5| |7| |9| |11|
+ *
+ * Delete 1.
+ *
+ * This is interesting because the code was written to handle right-side
+ * deletions for the most part, and this is a left side. :D
+ *
+ * To create this, we did insert: 1-11
+ */
+static void test_deleteCase10c(void)
+{
+    int input[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+    block_t *root = NULL;
+
+    printf("testing delete leaf case 10c\n");
+
+    root = test_buildTree(root, input, NUM_ELEMENTS(input));
+
+    printTree("\nfully-built:\n\n", root);
+    printf("\n");
+
+    delete(root, 1);
+
+    printTree("\npost-delete:\n\n", root);
+    printf("\n");
+
+    // test it!
+    {
+        VERIFY_DELETE(root, input, 1);
+
+        VERIFY_BLOCK2(0, 8);
+        VERIFY_BLOCK2(2, 2, 3);
+        VERIFY_BLOCK2(3, 5);
+        VERIFY_BLOCK2(4, 7);
+        VERIFY_BLOCK2(6, 4, 6);
+        VERIFY_BLOCK2(7, 9);
+        VERIFY_BLOCK2(8, 11);
+        VERIFY_BLOCK2(9, 10);
+    }
+
+    depthFirstFree(root);
+
+    return;
+}
+
+/*
+ * This is leaf delete case 10d.
+ *
+ *       |4|8|                            |4|
+ *     /    \       \                   /       \
+ *   |2|     |6|     |10|        =>    |2|      |8|10|
+ *  /  \    /   \    /   \            /   \    /   \  \
+ * |1| |3| |5| |7| |9| |11|          |1| |3| |6|7| |9| |11|
+ *
+ * Delete 5.
+ *
+ * This is interesting because the code was written to handle right-side
+ * deletions for the most part, and this is a left side. :D
+ *
+ * To create this, we did insert: 1-11
+ */
+static void test_deleteCase10d(void)
+{
+    int input[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+    block_t *root = NULL;
+
+    printf("testing delete leaf case 10d\n");
+
+    root = test_buildTree(root, input, NUM_ELEMENTS(input));
+
+    printTree("\nfully-built:\n\n", root);
+    printf("\n");
+
+    delete(root, 5);
+
+    printTree("\npost-delete:\n\n", root);
+    printf("\n");
+
+    // test it!
+    {
+        VERIFY_DELETE(root, input, 5);
+
+        VERIFY_BLOCK2(0, 8);
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(4, 6, 7);
+        VERIFY_BLOCK2(5, 2, 4);
+        VERIFY_BLOCK2(7, 9);
+        VERIFY_BLOCK2(8, 11);
+        VERIFY_BLOCK2(9, 10);
+    }
+
+    depthFirstFree(root);
+
+    return;
+}
+
+/*
+ * This is leaf delete case 11a.
+ *
+ *      |4|
+ *     /    \
+ *   |2|     |6|     =>   |2|4|
+ *  /  \    /   \        /  \  \
+ * |1| |3| |5| |7|      |1| |3| |5|6|
+ *
+ * Delete 7.
+ *
+ * This is interesting because the code was written to handle right-side
+ * deletions for the most part, and this is a left side. :D
+ *
+ * To create this, we did insert: 1-11
+ */
+static void test_deleteCase11a(void)
+{
+    int input[] = {1, 2, 3, 4, 5, 6, 7};
+    block_t *root = NULL;
+
+    printf("testing delete leaf case 11a\n");
+
+    root = test_buildTree(root, input, NUM_ELEMENTS(input));
+
+    printTree("\nfully-built:\n\n", root);
+    printf("\n");
+
+    delete(root, 7);
+
+    printTree("\npost-delete:\n\n", root);
+    printf("\n");
+
+    // test it!
+    {
+        VERIFY_DELETE(root, input, 7);
+
+        VERIFY_BLOCK2(1, 1);
+        VERIFY_BLOCK2(2, 3);
+        VERIFY_BLOCK2(3, 5, 6);
+        VERIFY_BLOCK2(0, 2, 4); /* copied back into root block. */
     }
 
     depthFirstFree(root);
@@ -1734,6 +2090,7 @@ static void test_deleteCase4c(void)
 int main(void)
 {
     int i;
+
     /*
      * Prevent innocuous code changes from breaking code that made reasonable
      * assumptions.
@@ -1743,18 +2100,23 @@ int main(void)
 
     test_ptr_t tests[] = {
             test_insertBalance,
-            test_deleteLeafEndSimple,
             test_deleteLeafFirstSimple,
-            test_deleteCase3,
-            test_deleteCase6,
-            test_deleteCase7,
-            test_deleteCase8,
+            test_deleteLeafEndSimple,
             test_deleteCase2,
-            test_deleteCase5a,
-            test_deleteCase5b,
+            test_deleteCase3,
             test_deleteCase4a,
             test_deleteCase4b,
             test_deleteCase4c,
+            test_deleteCase5a,
+            test_deleteCase5b,
+            test_deleteCase6,
+            test_deleteCase7,
+            test_deleteCase8,
+            test_deleteCase10a,
+            test_deleteCase10b,
+            test_deleteCase10c,
+            test_deleteCase10d,
+            test_deleteCase11a,
     };
 
     for (i = 0; i < NUM_ELEMENTS(tests); i++) {
