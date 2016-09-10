@@ -15,31 +15,9 @@
 #include <stdio.h>
 #include <string.h>
 
-#define NUM_ELEMENTS(X) (sizeof(X)/sizeof(*X))
+#include "hashtable.h"
 
-struct hashtable; /* forward declare. */
-
-typedef int (*hash_t)(struct hashtable *t, int k);
-
-typedef struct list {
-    struct list *next;
-    int value;
-} list_t;
-
-struct hashtable {
-    int n; /* number of filled slots. */
-    int m; /* size of table. */
-    int g; /* n that triggers growth. */
-    int s; /* n that triggers shrink. */
-    list_t **table; /* the table. */
-    hash_t hash; /* the method. */
-};
-
-static int search(struct hashtable *table, int value);
 static void growtable(struct hashtable *table, int grow);
-static void insert(struct hashtable *table, int value);
-static void delete(struct hashtable *table, int value);
-static void freetable(struct hashtable *table);
 
 /* division */
 static int
@@ -50,11 +28,6 @@ division(struct hashtable *table, int key)
      */
     return key % table->m;
 }
-
-#define SMALL_TABLE 8
-
-/* m (table size) == 2**r; maybe make variable */
-#define TABLE_POWER 16
 
 #if 0 /* revisit when done with design. */
 #define ARCH_BITS (sizeof(int) * 8)
@@ -78,8 +51,7 @@ multiplication(struct hashtable *table, int key)
 }
 #endif
 
-static void
-buildhashtable(struct hashtable *table, int m)
+void buildhashtable(struct hashtable *table, int m)
 {
     table->n = 0;
     table->m = m;
@@ -96,8 +68,7 @@ buildhashtable(struct hashtable *table, int m)
 }
 
 /* Is the key in the table? */
-static int
-search(struct hashtable *table, int value)
+int search(struct hashtable *table, int value)
 {
     int found = 0;
     int slot = table->hash(table, value);
@@ -149,8 +120,7 @@ static void growtable(struct hashtable *table, int grow)
 }
 
 /* theta(alpha + 1), keep alpha low, because it's related to chain length */
-static void
-insert(struct hashtable *table, int value)
+void insert(struct hashtable *table, int value)
 {
     list_t *prev = NULL;
 
@@ -188,7 +158,7 @@ insert(struct hashtable *table, int value)
     return;
 }
 
-static void delete(struct hashtable *table, int value)
+void delete(struct hashtable *table, int value)
 {
     list_t *prev = NULL;
 
@@ -225,8 +195,7 @@ static void delete(struct hashtable *table, int value)
     return;
 }
 
-static void
-freetable(struct hashtable *table)
+void freetable(struct hashtable *table)
 {
     int i;
     list_t *curr, *next;
@@ -241,29 +210,4 @@ freetable(struct hashtable *table)
     }
 
     free(table->table);
-}
-
-int main(void)
-{
-    int i;
-    int input[] = {1, 4, 6, 100, 1000, 234, 12312, 1435, 166, 132409, 111111, 12, 0, 1};
-    struct hashtable ht;
-
-    buildhashtable(&ht, SMALL_TABLE);
-
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        insert(&ht, input[i]);
-        assert(search(&ht, input[i]) == 1);
-    }
-
-    /* minus 1 because 1 is duplicated. */
-    assert(ht.n == NUM_ELEMENTS(input)-1);
-    assert(ht.m == SMALL_TABLE << 2); /* it grows twice. */
-
-    delete(&ht, 4);
-    assert(ht.n == NUM_ELEMENTS(input)-2);
-
-    freetable(&ht);
-
-    return 0;
 }
