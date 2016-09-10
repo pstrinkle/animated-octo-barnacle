@@ -221,6 +221,9 @@ static void blockAppend(block_t *insert, key_t *promoted, block_t *newblk)
 
     /*
      * Convenient we know this will always be to either the beginning or end.
+     * The above is only true on deletion instead of insert. :D  Therefore,
+     * this assumption won't always hold.  Therefore, we need to make the code
+     * generic. :D Which isn't too bad. :D
      */
     if (insert->used > 0) {
         /* Insert before? */
@@ -244,7 +247,8 @@ static void blockAppend(block_t *insert, key_t *promoted, block_t *newblk)
         }
     } /* append. */
 
-    insert->keys[insert->used].key = promoted->key; /* i think this is good.. */
+    /* i think this is good.. */
+    insert->keys[insert->used].key = promoted->key;
     insert->keys[insert->used+1].ptr = newblk;
     insert->used++;
 
