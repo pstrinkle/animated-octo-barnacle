@@ -7,9 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define NUM_ELEMENTS(X) (sizeof(X)/sizeof(*X))
-
-static int *countingsort(int *input, int count)
+int *countingsort(int *input, int count)
 {
     int i, total;
     int counts[64]; /* to support numbers 0 - 63 */
@@ -37,26 +35,4 @@ static int *countingsort(int *input, int count)
     return output;
 }
 
-int main(void)
-{
-    int i;
-    int input[] = {0, 3, 8, 6, 4, 10, 9, 15, 11, 12, 6, 2, 0, 7, 7, 1, 10};
 
-    printf("unsorted ");
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        printf("%d ", input[i]);
-    }
-    printf("\n");
-
-    int *output = countingsort(input, NUM_ELEMENTS(input));
-
-    printf("sorted ");
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        printf("%d ", output[i]);
-    }
-    printf("\n");
-
-    free(output);
-
-    return 0;
-}

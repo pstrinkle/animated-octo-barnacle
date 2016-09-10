@@ -2,16 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#define NUM_ELEMENTS(X) (sizeof(X)/sizeof(*X))
-
-struct item;
-
-struct item {
-    struct item *next;
-    /* Could be void * for anything or use an enum for variation with a flag.
-     */
-    int value;
-};
+#include "sortedlinkedlist.h"
 
 struct item *head = NULL;
 
@@ -24,7 +15,7 @@ static struct item *newitem(int value)
     return n;
 }
 
-static void freelist(struct item *head)
+void freelist(struct item *head)
 {
     struct item *curr, *next;
 
@@ -43,7 +34,7 @@ static void freelist(struct item *head)
 }
 
 /* if sorted insert, then O(n), otherwise constant time :) */
-static void insert(int value)
+void insert(int value)
 {
     struct item *curr, *prev;
     struct item *n = newitem(value);
@@ -78,7 +69,7 @@ static void insert(int value)
 }
 
 /* constant time pop */
-static struct item *pop(void)
+struct item *pop(void)
 {
     if (head == NULL) {
         return NULL;
@@ -89,7 +80,7 @@ static struct item *pop(void)
     return n;
 }
 
-static void printList(struct item *head)
+void printList(struct item *head)
 {
     struct item *curr = head;
     while (curr) {
@@ -100,23 +91,4 @@ static void printList(struct item *head)
     printf("\n");
 }
 
-int main(void)
-{
-    int i;
-    int input[] = {0, 3, 8, 6, 4, 10, 9, 15, 11};
 
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        printf("%d ", input[i]);
-    }
-    printf("\n");
-
-    for (i = 0; i < NUM_ELEMENTS(input); i++) {
-        insert(input[i]);
-    }
-
-    printList(head);
-
-    freelist(head);
-
-    return 0;
-}

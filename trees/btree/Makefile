@@ -1,5 +1,5 @@
 make:
-	gcc -Wall -o btree btree.c
+	gcc -Wall -o btree test.c btree.c
 
 clean:
 	rm -rf *~ core.* *# *.o btree

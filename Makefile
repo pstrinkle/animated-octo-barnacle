@@ -1,5 +1,7 @@
 
+# -----------------------------------------------------------------------------
 # There is a better way, but this is a decent first start.
+
 PKGS = lists/linkedlist \
 	lists/sortedlinkedlist \
 	sorting/countingsort \
@@ -18,6 +20,12 @@ all: $(PKGS)
 $(PKGS):
 	$(MAKE) -C $@
 
+# -----------------------------------------------------------------------------
+# graphs
+depthfirstsearch:
+	$(MAKE) -C graphs/depthfirstsearch
+
+# -----------------------------------------------------------------------------
 # trees
 binarysearchtree:
 	$(MAKE) -C trees/binarysearchtree
@@ -25,8 +33,10 @@ binarysearchtree:
 btree:
 	$(MAKE) -C trees/btree
 
-
-
+# -----------------------------------------------------------------------------
+# sorting
+insertionsort:
+	$(MAKE) -C sorting/insertionsort
 
 
 clean:
@@ -34,4 +44,4 @@ clean:
 		$(MAKE) -C $$dir clean; \
 	done;
 
-.PHONY: all $(PKGS) clean btree binarysearchtree
+.PHONY: all $(PKGS) clean btree binarysearchtree insertionsort
