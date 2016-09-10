@@ -566,13 +566,13 @@ static void demoteParent(block_t *me, block_t *sub)
     block_t *parent = me->parent;
     block_t *pushedHere = NULL;
 
+#if DELETE_DEBUG
     {
         int subid = -1;
         if (sub) {
             subid = sub->id;
         }
 
-#if DELETE_DEBUG
         DELETE_DPRINTF("demoteParent: me %d, my parent: %d, sub: %d\n",
                 me->id,
                 parent->id,
@@ -585,12 +585,11 @@ static void demoteParent(block_t *me, block_t *sub)
         blockPrint(parent);
 
         if (sub) {
-            // XXX: sub will need a new parent once it's attached.
             DELETE_DPRINTF("my sub: ");
             blockPrint(sub);
         }
-#endif
     }
+#endif
 
     /*
      * Find whomever points to me, may be left or right pointer, and demote
@@ -604,6 +603,11 @@ static void demoteParent(block_t *me, block_t *sub)
                 if (sub) {
                     key_t k;
                     k.key = parent->keys[i].key;
+
+                    DELETE_DPRINTF("trying to append key: %d, with a pointer to: %d into %d\n",
+                            k.key,
+                            sub->id,
+                            parent->keys[i+1].ptr->id);
 
                     blockAppend(parent->keys[i+1].ptr, &k, sub);
                 } else {
@@ -784,12 +788,12 @@ static void deleteLeaf(block_t *where, key_t *curr)
 
     /* if this is root. */
     if (!where->parent) {
-        fprintf(stderr, "root node is empty!\n");
+        DELETE_DPRINTF("root node is empty!\n");
         assert(0);
         return;
     }
 
-    fprintf(stderr, "the leaf block is now empty!\n");
+    DELETE_DPRINTF("the leaf block is now empty!\n");
 
     /*
      * Ok, so we now have an empty block, so we need to recursively try to
@@ -839,7 +843,7 @@ static void deleteLeaf(block_t *where, key_t *curr)
      * -----------------------------------------------
      * | 9 ... (not yet documented, will document when I handle it)
      *
-     * + more complex; detailed later.
+     * + more complex; detailed later (as case 11, lol).
      * ++ push neighbor down, free block, three variations for immediate
      * siblings (4a, 4b,4c).
      *
@@ -850,6 +854,23 @@ static void deleteLeaf(block_t *where, key_t *curr)
      * decision.  I could balance with a coin flip in that case, but meh, this
      * is faster only because it doesn't waste time flipping coins and produces
      * the same balanced tree.
+     *
+     * There are other interesting cases for leaf deletion based on case 1
+     * above, which recurses up to re-balance.
+     *
+     * | case | parent | left    | right   | action  |
+     * |      | suff.  | sibling | sibling |         |
+     * |      |        | suff.   | suff.   |         |
+     * -----------------------------------------------
+     * | 10   |
+     * -----------------------------------------------
+     * | 11   |
+     * -----------------------------------------------
+     * | 12   |
+     * -----------------------------------------------
+     * | 13   |
+     * -----------------------------------------------
+     *
      */
 
     /* Determine if immediate siblings are sufficient. */
@@ -867,7 +888,7 @@ static void deleteLeaf(block_t *where, key_t *curr)
     lSib = findLeftSibling(where);
     rSib = findRightSibling(where);
 
-    fprintf(stderr, "left sib: 0x%p, right sib: 0x%p\n", lSib, rSib);
+    DELETE_DPRINTF("left sib: 0x%p, right sib: 0x%p\n", lSib, rSib);
 
     /*
      * This code is going to be effectively in two places, which means maybe
@@ -948,7 +969,7 @@ static void delete(block_t *root, int value)
         deleteLeaf(where, curr);
     } else {
         /* 3b. Handle parent deletion. */
-        fprintf(stderr, "this node has children!\n");
+        DELETE_DPRINTF("this node has children!\n");
         assert(0);
         //deleteInternal();
     }
@@ -990,6 +1011,13 @@ static void insertLeaf(block_t *leaf, int value)
     }
 }
 
+/*
+ * Insert was designed by introducing keys in monotonically increasing order.
+ *
+ * There are other interesting cases, that will require some modifications.
+ *
+ *
+ */
 static void insert(block_t *root, int value)
 {
     block_t *where;
@@ -1258,6 +1286,51 @@ check:
     return ret;
 }
 
+/*
+ * Create the following tree.
+ *
+ * Inserting 9-2, then insert 1 to create the other tree.
+ *
+ *     |6|                   |6|
+ *    /       \             /         \
+ *   |4|      |8|     =>   |2|4|      |8|
+ *  /   \     /  \        /   \  \    /  \
+ * |2|3| |5| |7| |9|     |1| |3| |5| |7| |9|
+ *
+ */
+static void test_insertDescending1(void)
+{
+    int input[] = {9, 8, 7, 6, 5, 4, 3, 2};
+    block_t *root = NULL;
+
+    printf("testing insert descending\n");
+
+    {
+        int i;
+
+        root = newBlock();
+        assert(root);
+
+        for (i = 0; i < NUM_ELEMENTS(input); i++) {
+            insert(root, input[i]);
+            fprintf(stderr, "\nafter: %d", input[i]);
+            printTree("\n", root);
+        }
+    }
+
+    //root = test_buildTree(root, input, NUM_ELEMENTS(input));
+
+    printTree("\nfully-built:\n\n", root);
+
+    //insert(root, 1);
+
+    depthFirstFree(root);
+}
+
+/*
+ * Boring building a tree by monotonically increasing keys, which always
+ * appends to the far right of the tree.
+ */
 static void test_insertBalance(void)
 {
     int i;
@@ -1839,8 +1912,8 @@ static void test_deleteCase8(void)
  *
  *       |4|8|                            |4|
  *     /    \      \                    /     \
- *   |2|     |6|     |10|        =>    |2|     |6|8|
- *  /  \    /   \    /   \             /  \    /  \  \
+ *   |2|     |6|    |10|        =>     |2|     |6|8|
+ *  /  \    /   \   /   \             /  \    /  \  \
  * |1| |3| |5| |7| |9| |11|          |1| |3| |5| |7| |9|10|
  *
  * Delete 11.
@@ -2117,6 +2190,7 @@ int main(void)
             test_deleteCase10c,
             test_deleteCase10d,
             test_deleteCase11a,
+            test_insertDescending1,
     };
 
     for (i = 0; i < NUM_ELEMENTS(tests); i++) {
