@@ -14,10 +14,8 @@ verify I didn't introduce a regression --- provided my test coverage was good.
 * sorting
   * optimized merge sort (just use insertion towards the bottom)
   * heap sort (?maybe) 
-* trees
-  * breadth first search
-  * depth first search
 * graphs
+  * breadth first search
   * representation
   * minimum spanning trees (yay, greedy)
 * trees
@@ -41,6 +39,8 @@ verify I didn't introduce a regression --- provided my test coverage was good.
 * trees
   * binary search tree
   * trie
+* graphs
+  * depth first search (done with bst)
 * lists
   * linked lists
   * sorted linked list

@@ -3,21 +3,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#define NUM_ELEMENTS(X) (sizeof(X)/sizeof(*X))
+#include "binarysearchtree.h"
 
-struct node;
-
-typedef struct node {
-    struct node *left;
-    struct node *right;
-    struct node *parent;
-    int value;
-} node_t;
-
-/* so it can be re-pointed more easily */
-static node_t *root = NULL;
-
-static node_t *newnode(int value, node_t *parent)
+node_t *newnode(int value, node_t *parent)
 {
     node_t *t = malloc(sizeof(node_t));
     //NULLCHECK
@@ -40,7 +28,7 @@ static node_t *duplicatenode(node_t *node) {
     return t;
 }
 
-static node_t *search(node_t *node, int value)
+node_t *search(node_t *node, int value)
 {
     if (node == NULL) {
         return node;
@@ -56,7 +44,7 @@ static node_t *search(node_t *node, int value)
     }
 }
 
-static void insert(node_t *node, int value)
+void insert(node_t *node, int value)
 {
     /* prevent duplicates in this version. */
     if (node->value == value) {
@@ -96,7 +84,7 @@ static node_t *findmax(node_t *node) {
     return findmax(node->right);
 }
 
-static void delete(node_t *node, int value)
+void delete(node_t *root, node_t *node, int value)
 {
     node_t *replacement, *parent;
     int foundLeft = 0;
@@ -107,16 +95,16 @@ static void delete(node_t *node, int value)
 
     if (node->value != value) {
         if (node->value > value) {
-            return delete(node->left, value);
+            return delete(root, node->left, value);
         } else {
-            return delete(node->right, value);
+            return delete(root, node->right, value);
         }
     }
 
     /* if we're here, then it's a match. */
 
     if (node->parent == NULL) {
-        parent = root;
+        parent = root; /* XXX: Revisit this. */
     } else {
         parent = node->parent;
     }
@@ -177,7 +165,7 @@ static void delete(node_t *node, int value)
      */
     node_t *copy = duplicatenode(replacement);
 
-    delete(node, replacement->value);
+    delete(root, node, replacement->value);
 
     /* fully transplant it; by calling delete here, there are some convenient
      * things we can know based on the possible graphs that lead here, :D */
@@ -194,7 +182,7 @@ static void delete(node_t *node, int value)
     return;
 }
 
-static void depthFirstFree(node_t *node)
+void depthFirstFree(node_t *node)
 {
     if (node == NULL) {
         return;
@@ -211,7 +199,7 @@ static void depthFirstFree(node_t *node)
     return;
 }
 
-static void depthFirstPrint(node_t *node)
+void depthFirstPrint(node_t *node)
 {
     if (node == NULL) {
         return;
@@ -236,30 +224,3 @@ static void depthFirstPrint(node_t *node)
     depthFirstPrint(node->right);
 }
 
-int main(void)
-{
-    int i;
-    int input[] = {0, 3, 8, 6, 4, 10, 9, 15, 11};
-
-
-    /* set the parent to NULL because it is. */
-    root = newnode(0, NULL);
-
-    /* skip over root. */
-    for (i = 1; i < NUM_ELEMENTS(input); i++) {
-        insert(root, input[i]);
-    }
-
-    depthFirstPrint(root);
-
-    node_t *s = search(root, 4);
-    printf("s->value: %d\n", s->value);
-
-    delete(root, 8);
-
-    depthFirstPrint(root);
-
-    depthFirstFree(root);
-
-    return 0;
-}
