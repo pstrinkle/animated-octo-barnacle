@@ -19,9 +19,9 @@ verify I didn't introduce a regression --- provided my test coverage was good.
   * representation
   * minimum spanning trees (yay, greedy)
 * trees
-  * B-variant tree **in progress**
-  * AVL tree (maybe)
+  * B-tree **in progress**
   * red-black tree
+  * AVL tree (maybe)
   * splay tree (maybe)
 * lists
   * skip lists
