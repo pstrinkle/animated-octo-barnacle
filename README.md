@@ -13,9 +13,9 @@ a sufficiently long time, I've created this repository to hold them as examples.
   * representation
   * minimum spanning trees (yay, greedy)
 * trees
-  * B-variant tree **in progress**
-  * AVL tree (maybe)
+  * B-tree **in progress**
   * red-black tree
+  * AVL tree (maybe)
   * splay tree (maybe)
 * lists
   * skip lists
