@@ -36,8 +36,9 @@ struct item *allocate(int value) {
 #endif
 
 /* here. (not a sorted list) */
-static void prepend(struct item **head, int value);
+static void unshift(struct item **head, int value);
 static void dump(struct item *head);
+static void freeall(struct item *head);
 
 int main(void) {
     int v;
@@ -51,9 +52,9 @@ int main(void) {
 	    fprintf(stderr, "Unexpected output received: %d\n", v);
 	}
 
-	prepend(&head, 1);
-	prepend(&head, 2);
-	prepend(&head, 3);
+	unshift(&head, 1);
+	unshift(&head, 2);
+	unshift(&head, 3);
 
 	dump(head);
 
@@ -69,6 +70,8 @@ int main(void) {
 
     assert(NULL == findvalue(head, 4));
 
+    freeall(head);
+
 	return 0;
 }
 
@@ -82,9 +85,18 @@ static void dump(struct item *head) {
     return;
 }
 
+static void freeall(struct item *head) {
+    struct item *prev;
+    struct item *curr = head;
+    while (NULL != curr) {
+        prev = curr;
+        curr = curr->next;
+        free(prev);
+    }
+}
 
 static void
-prepend(struct item **head, int value) {
+unshift(struct item **head, int value) {
     struct item *ins = allocate(value);
 
     /* if head is NULL, the list is empty. */

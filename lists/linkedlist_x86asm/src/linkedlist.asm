@@ -37,12 +37,18 @@ _allocate:
     push ebp
     mov ebp, esp
 
+    ;push edi
+    push ecx
+    ;push ebx
+
     ; so size_t is 32-bits when I checked the man page, and we're compiling
     ; this to 32-bits, but malloc seems to really want a 64-bit input value...
-    push dword SIZEOF_ITEM
-    push dword 0
+    ;push dword SIZEOF_ITEM
+    ;push dword 0
+    ;mov edi, SIZEOF_ITEM
+    mov ecx, 8
     call _malloc
-    add esp, 8
+    ;add esp, 8
 
     mov ebx, eax ; store the pointer in ebx
 
@@ -53,9 +59,14 @@ _allocate:
 
     mov eax, ebx
 
+    ;pop ebx
+    pop ecx
+    ;pop edi
+
     ; fixup
     mov esp, ebp
     pop ebp
+
     ret
 
 ; item *findvalue(item *list, int value)
